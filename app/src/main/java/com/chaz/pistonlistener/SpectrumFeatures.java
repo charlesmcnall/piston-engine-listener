@@ -7,7 +7,10 @@ public final class SpectrumFeatures {
     public final String phase;
     public final double rpm;
     public final double rmsDbfs;
+    public final double peakDbfs;
+    public final double crestFactorDb;
     public final double clippedPercent;
+    public final double flatTopPercent;
     public final double dominantHz;
     public final double centroidHz;
     public final double band20To120;
@@ -22,7 +25,10 @@ public final class SpectrumFeatures {
             String phase,
             double rpm,
             double rmsDbfs,
+            double peakDbfs,
+            double crestFactorDb,
             double clippedPercent,
+            double flatTopPercent,
             double dominantHz,
             double centroidHz,
             double band20To120,
@@ -36,7 +42,10 @@ public final class SpectrumFeatures {
         this.phase = phase;
         this.rpm = rpm;
         this.rmsDbfs = rmsDbfs;
+        this.peakDbfs = peakDbfs;
+        this.crestFactorDb = crestFactorDb;
         this.clippedPercent = clippedPercent;
+        this.flatTopPercent = flatTopPercent;
         this.dominantHz = dominantHz;
         this.centroidHz = centroidHz;
         this.band20To120 = band20To120;
@@ -53,7 +62,10 @@ public final class SpectrumFeatures {
                 nextPhase,
                 nextRpm,
                 rmsDbfs,
+                peakDbfs,
+                crestFactorDb,
                 clippedPercent,
+                flatTopPercent,
                 dominantHz,
                 centroidHz,
                 band20To120,
@@ -67,13 +79,14 @@ public final class SpectrumFeatures {
 
     public static String csvHeader() {
         return "timestampMillis,elapsedMillis,phase,rpm,rmsDbfs,clippedPercent,dominantHz,centroidHz,"
-                + "band20_120,band120_600,band600_2500,band2500_6000,trendScore";
+                + "band20_120,band120_600,band600_2500,band2500_6000,trendScore,"
+                + "peakDbfs,crestFactorDb,flatTopPercent,signalQuality";
     }
 
     public String toCsvLine(long elapsedMillis) {
         return String.format(
                 Locale.US,
-                "%d,%d,%s,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f",
+                "%d,%d,%s,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.3f,%.4f,%s",
                 timestampMillis,
                 elapsedMillis,
                 sanitizeCsv(phase),
@@ -86,7 +99,11 @@ public final class SpectrumFeatures {
                 band120To600,
                 band600To2500,
                 band2500To6000,
-                trendScore
+                trendScore,
+                peakDbfs,
+                crestFactorDb,
+                flatTopPercent,
+                sanitizeCsv(SignalQualityGate.classifyFrame(this).label)
         );
     }
 
@@ -97,4 +114,3 @@ public final class SpectrumFeatures {
         return value.replace(',', ' ').replace('\n', ' ').replace('\r', ' ').trim();
     }
 }
-

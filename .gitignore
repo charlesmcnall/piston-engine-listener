@@ -1,6 +1,6 @@
 .gradle/
+.gradle-workspace/
 build/
 app/build/
 .toolchain/
 local.properties
-

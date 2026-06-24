@@ -30,43 +30,53 @@ public final class MainActivity extends Activity {
     private static final int DEFAULT_CAPTURE_SECONDS = 30;
     private static final int MIN_CAPTURE_SECONDS = 5;
     private static final int MAX_CAPTURE_SECONDS = 300;
+    private static final int PREFLIGHT_CAPTURE_SECONDS = 8;
     private static final String[] PHASES = new String[]{"Idle", "Run-up", "Climb", "Cruise", "Descent"};
+    private static final String[] PREFLIGHT_STEPS = new String[]{"Quiet cabin", "Idle", "Run-up"};
     private static final String USER_INSTRUCTIONS =
             "1. Install\n"
                     + "Download the APK from the GitHub release, open it on the Android phone, allow install unknown apps if prompted, then launch Piston Listener. Grant microphone permission.\n\n"
                     + "2. Configure Targets\n"
                     + "Open Settings, set the default capture time, and enter the target RPM for each engine phase you plan to record. Leave RPM blank or 0 if you do not know it yet.\n\n"
-                    + "3. Place the Phone Consistently\n"
+                    + "3. Run Preflight\n"
+                    + "Tap Preflight before collecting trend data. The app checks quiet cabin, idle, and run-up levels and reports Good, Too quiet, Clipping, or Compression suspected.\n\n"
+                    + "4. Place the Phone Consistently\n"
                     + "Put the phone in the same cabin location every time, with the mic unobstructed. Do not use Bluetooth audio. Consistent placement matters more than perfect placement.\n\n"
-                    + "4. Capture a Stable Engine Phase\n"
+                    + "5. Capture a Stable Engine Phase\n"
                     + "Tap Idle, Run-up, Climb, Cruise, or Descent once. The app records for the configured duration, stops automatically, and saves the session. Keep the engine stable during the countdown.\n\n"
-                    + "5. Watch Clipping\n"
+                    + "6. Watch Signal Quality\n"
                     + "If the app shows Input clipping, that recording is not useful. Move the phone farther from loud vents, speakers, or panels and try again. Clipping means the mic is overloaded.\n\n"
-                    + "6. Build a Baseline\n"
+                    + "7. Build a Baseline\n"
                     + "The app needs 3 saved sessions per phase before the trend score becomes useful. Example: do three good Idle recordings before trusting Idle trend changes.\n\n"
-                    + "7. Read the Screen\n"
+                    + "8. Read the Screen\n"
+                    + "Signal: the current quality gate result.\n"
                     + "RMS: overall loudness.\n"
                     + "Clipping: overloaded audio percentage. Should stay near zero.\n"
+                    + "Peak/Crest: peak level and headroom shape.\n"
                     + "Dominant: strongest frequency.\n"
                     + "Centroid: center of spectral energy.\n"
                     + "Bands: energy split across frequency ranges.\n"
                     + "Baseline: how many prior sessions exist for the active phase.\n"
                     + "Trend: rough change score versus previous recordings for that phase.\n\n"
-                    + "8. Interpret Carefully\n"
+                    + "9. Interpret Carefully\n"
                     + "A high trend score means this sounds different than the baseline, not that the engine is failing. Use it as a prompt to inspect, compare with engine monitor data, or ask a mechanic.\n\n"
-                    + "9. Safety\n"
+                    + "10. Safety\n"
                     + "This is advisory trend-logging software only. It is not an approved engine monitor, maintenance tool, or flight safety system. Use normal aircraft instruments and maintenance procedures first.";
 
     private final EngineAudioRecorder recorder = new EngineAudioRecorder();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, Button> phaseButtons = new HashMap<>();
+    private final SignalQualityGate qualityGate = new SignalQualityGate();
 
+    private Button preflightButton;
     private Button cancelButton;
     private SpectrumView spectrumView;
     private TextView captureText;
     private TextView statusText;
+    private TextView signalText;
     private TextView rmsText;
     private TextView clipText;
+    private TextView peakText;
     private TextView dominantText;
     private TextView centroidText;
     private TextView bandsText;
@@ -77,9 +87,14 @@ public final class MainActivity extends Activity {
     private SessionLogger.Baseline baseline = SessionLogger.Baseline.empty();
     private String activePhase = "Idle";
     private double activeTargetRpm = 0.0;
+    private int activeCaptureSeconds = DEFAULT_CAPTURE_SECONDS;
     private long captureEndsAtMillis = 0L;
     private String sourceStatus = "";
     private boolean captureCompleting = false;
+    private boolean calibrationCapture = false;
+    private boolean preflightMode = false;
+    private int preflightStepIndex = 0;
+    private StringBuilder preflightReport = new StringBuilder();
 
     private final Runnable countdownRunnable = new Runnable() {
         @Override
@@ -147,6 +162,13 @@ public final class MainActivity extends Activity {
         settingsParams.setMargins(dp(10), 0, 0, 0);
         utilityRow.addView(settingsButton, settingsParams);
 
+        preflightButton = new Button(this);
+        preflightButton.setText("Preflight");
+        preflightButton.setOnClickListener(view -> startPreflight());
+        LinearLayout.LayoutParams preflightParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        preflightParams.setMargins(dp(10), 0, 0, 0);
+        utilityRow.addView(preflightButton, preflightParams);
+
         captureText = text("Tap a phase to start a timed capture.", 15, Color.rgb(15, 23, 42), Typeface.BOLD);
         captureText.setPadding(0, 0, 0, dp(10));
         content.addView(captureText, matchWrap());
@@ -187,16 +209,20 @@ public final class MainActivity extends Activity {
         metrics.setOrientation(LinearLayout.VERTICAL);
         content.addView(metrics, matchWrap());
 
+        signalText = metric("Signal", "--");
         rmsText = metric("RMS", "--");
         clipText = metric("Clipping", "--");
+        peakText = metric("Peak/Crest", "--");
         dominantText = metric("Dominant", "--");
         centroidText = metric("Centroid", "--");
         bandsText = metric("Bands", "--");
         trendText = metric("Trend", "--");
         baselineText = metric("Baseline", "--");
 
+        metrics.addView(signalText, matchWrap());
         metrics.addView(rmsText, matchWrap());
         metrics.addView(clipText, matchWrap());
+        metrics.addView(peakText, matchWrap());
         metrics.addView(dominantText, matchWrap());
         metrics.addView(centroidText, matchWrap());
         metrics.addView(bandsText, matchWrap());
@@ -227,6 +253,27 @@ public final class MainActivity extends Activity {
     }
 
     private void startPhaseCapture(String phase) {
+        startTimedCapture(phase, getCaptureSeconds(), false);
+    }
+
+    private void startPreflight() {
+        if (recorder.isRunning()) {
+            return;
+        }
+
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
+            return;
+        }
+
+        preflightMode = true;
+        preflightStepIndex = 0;
+        preflightReport = new StringBuilder();
+        statusText.setText("Starting preflight");
+        startTimedCapture(PREFLIGHT_STEPS[preflightStepIndex], PREFLIGHT_CAPTURE_SECONDS, true);
+    }
+
+    private void startTimedCapture(String phase, int durationSeconds, boolean calibration) {
         if (recorder.isRunning()) {
             return;
         }
@@ -237,40 +284,47 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        calibrationCapture = calibration;
         activePhase = phase;
         activeTargetRpm = targetRpm(phase);
-        baseline = SessionLogger.loadBaseline(this, activePhase);
-        logger = new SessionLogger();
+        activeCaptureSeconds = durationSeconds;
+        baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase);
+        logger = calibrationCapture ? null : new SessionLogger();
+        qualityGate.reset();
         captureCompleting = false;
         sourceStatus = "";
 
-        try {
-            logger.start(this, activePhase);
-        } catch (IOException exception) {
-            statusText.setText("Log start failed: " + exception.getMessage());
-            logger = null;
-            return;
+        if (logger != null) {
+            try {
+                logger.start(this, activePhase);
+            } catch (IOException exception) {
+                statusText.setText("Log start failed: " + exception.getMessage());
+                logger = null;
+                return;
+            }
         }
 
         setPhaseButtonsEnabled(false);
+        if (preflightButton != null) {
+            preflightButton.setEnabled(false);
+        }
         cancelButton.setEnabled(true);
-        statusText.setText("Recording " + activePhase);
-        captureEndsAtMillis = System.currentTimeMillis() + getCaptureSeconds() * 1000L;
+        statusText.setText((calibrationCapture ? "Preflight " : "Recording ") + activePhase);
+        captureEndsAtMillis = System.currentTimeMillis() + activeCaptureSeconds * 1000L;
 
         recorder.start(new EngineAudioRecorder.Listener() {
             @Override
             public void onFeatures(SpectrumFeatures rawFeatures) {
-                if (logger == null) {
-                    return;
-                }
-
                 double trend = baseline.score(rawFeatures);
                 SpectrumFeatures features = rawFeatures.withContext(activePhase, activeTargetRpm, trend);
+                qualityGate.add(features);
                 updateMetrics(features);
-                try {
-                    logger.append(features);
-                } catch (IOException exception) {
-                    statusText.setText("Log write failed: " + exception.getMessage());
+                if (logger != null) {
+                    try {
+                        logger.append(features);
+                    } catch (IOException exception) {
+                        statusText.setText("Log write failed: " + exception.getMessage());
+                    }
                 }
             }
 
@@ -278,7 +332,7 @@ public final class MainActivity extends Activity {
             public void onStatus(String status) {
                 sourceStatus = status;
                 if (recorder.isRunning()) {
-                    statusText.setText("Recording " + activePhase + " - " + sourceStatus);
+                    statusText.setText((calibrationCapture ? "Preflight " : "Recording ") + activePhase + " - " + sourceStatus);
                 }
             }
 
@@ -301,22 +355,54 @@ public final class MainActivity extends Activity {
         boolean hadCapture = recorder.isRunning() || logger != null;
         recorder.stop();
 
+        SignalQualityGate.Snapshot signalQuality = qualityGate.snapshot();
         String sessionName = "";
+        boolean rejected = false;
+        boolean summaryFailed = false;
+        String summaryError = "";
         if (logger != null && completed) {
             sessionName = logger.getSessionFileName();
-            try {
-                logger.finish();
-            } catch (IOException exception) {
-                statusText.setText("Summary write failed: " + exception.getMessage());
+            if (signalQuality.acceptableForTrend) {
+                try {
+                    logger.finish(signalQuality);
+                } catch (IOException exception) {
+                    summaryFailed = true;
+                    summaryError = exception.getMessage();
+                }
+            } else {
+                rejected = true;
             }
         }
         logger = null;
-        baseline = SessionLogger.loadBaseline(this, activePhase);
+        baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase);
+
+        if (calibrationCapture && completed) {
+            appendPreflightResult(activePhase, signalQuality);
+            calibrationCapture = false;
+            preflightStepIndex++;
+            captureCompleting = false;
+
+            if (preflightMode && preflightStepIndex < PREFLIGHT_STEPS.length) {
+                handler.postDelayed(() -> startTimedCapture(PREFLIGHT_STEPS[preflightStepIndex], PREFLIGHT_CAPTURE_SECONDS, true), 700L);
+                return;
+            }
+
+            preflightMode = false;
+            showPreflightResults();
+        }
+
+        if (!completed) {
+            preflightMode = false;
+            calibrationCapture = false;
+        }
 
         if (cancelButton != null) {
             cancelButton.setEnabled(false);
         }
         setPhaseButtonsEnabled(true);
+        if (preflightButton != null) {
+            preflightButton.setEnabled(true);
+        }
         refreshPhaseButtons();
         refreshBaselineLabel();
 
@@ -325,7 +411,11 @@ public final class MainActivity extends Activity {
         }
 
         if (statusText != null && hadCapture) {
-            if (completed && !sessionName.isEmpty()) {
+            if (completed && summaryFailed) {
+                statusText.setText("Summary write failed: " + summaryError);
+            } else if (completed && rejected) {
+                statusText.setText("Rejected " + sessionName + " - " + signalQuality.label);
+            } else if (completed && !sessionName.isEmpty()) {
                 statusText.setText("Saved " + sessionName);
             } else if (!completed) {
                 statusText.setText("Capture cancelled");
@@ -333,6 +423,33 @@ public final class MainActivity extends Activity {
         }
 
         captureCompleting = false;
+    }
+
+    private void appendPreflightResult(String step, SignalQualityGate.Snapshot signalQuality) {
+        if (preflightReport.length() > 0) {
+            preflightReport.append("\n\n");
+        }
+        preflightReport
+                .append(step)
+                .append(": ")
+                .append(signalQuality.label)
+                .append("\n")
+                .append(signalQuality.detail);
+    }
+
+    private void showPreflightResults() {
+        TextView resultText = text(preflightReport.toString(), 15, Color.rgb(15, 23, 42), Typeface.NORMAL);
+        resultText.setPadding(dp(18), dp(12), dp(18), dp(4));
+
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.addView(resultText);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Preflight Results")
+                .setView(scrollView)
+                .setPositiveButton("Close", null)
+                .show();
+        statusText.setText("Preflight complete");
     }
 
     private void updateCountdown() {
@@ -352,20 +469,40 @@ public final class MainActivity extends Activity {
             activeButton.setText(activePhase + "\n" + remainingSeconds + "s remaining");
         }
 
-        captureText.setText(String.format(
-                Locale.US,
-                "%s capture: %ds remaining - target %s",
-                activePhase,
-                remainingSeconds,
-                targetRpmLabel(activeTargetRpm)
-        ));
+        if (calibrationCapture) {
+            captureText.setText(String.format(
+                    Locale.US,
+                    "Preflight %s: %ds remaining",
+                    activePhase,
+                    remainingSeconds
+            ));
+        } else {
+            captureText.setText(String.format(
+                    Locale.US,
+                    "%s capture: %ds remaining - target %s",
+                    activePhase,
+                    remainingSeconds,
+                    targetRpmLabel(activeTargetRpm)
+            ));
+        }
         handler.postDelayed(countdownRunnable, 250L);
     }
 
     private void updateMetrics(SpectrumFeatures features) {
+        SignalQualityGate.Snapshot frameQuality = SignalQualityGate.classifyFrame(features);
+        SignalQualityGate.Snapshot sessionQuality = qualityGate.snapshot();
+
         spectrumView.setSpectrum(features.spectrum);
+        signalText.setText("Signal   " + sessionQuality.label + " - " + frameQuality.label);
         rmsText.setText(formatMetric("RMS", "%.1f dBFS", features.rmsDbfs));
         clipText.setText(formatMetric("Clipping", "%.3f %%", features.clippedPercent));
+        peakText.setText(String.format(
+                Locale.US,
+                "Peak/Crest   %.1f dBFS / %.1f dB / flat %.3f %%",
+                features.peakDbfs,
+                features.crestFactorDb,
+                features.flatTopPercent
+        ));
         dominantText.setText(formatMetric("Dominant", "%.1f Hz", features.dominantHz));
         centroidText.setText(formatMetric("Centroid", "%.1f Hz", features.centroidHz));
         bandsText.setText(String.format(
@@ -383,12 +520,16 @@ public final class MainActivity extends Activity {
             trendText.setText(formatMetric("Trend", "%.1f", features.trendScore));
         }
 
-        if (features.clippedPercent > 0.25) {
-            statusText.setText("Input clipping");
-        } else if (baseline.isReady() && features.trendScore > 20.0) {
+        if (frameQuality.severity >= 3) {
+            statusText.setText("Signal: " + frameQuality.label);
+        } else if (frameQuality.severity >= 2) {
+            statusText.setText("Signal: " + frameQuality.label);
+        } else if (frameQuality.severity >= 1) {
+            statusText.setText("Signal: " + frameQuality.label);
+        } else if (!calibrationCapture && baseline.isReady() && features.trendScore > 20.0) {
             statusText.setText("Spectral shift");
         } else if (recorder.isRunning()) {
-            statusText.setText("Recording " + activePhase + (sourceStatus.isEmpty() ? "" : " - " + sourceStatus));
+            statusText.setText((calibrationCapture ? "Preflight " : "Recording ") + activePhase + (sourceStatus.isEmpty() ? "" : " - " + sourceStatus));
         }
     }
 

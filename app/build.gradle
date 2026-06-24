@@ -10,7 +10,18 @@ android {
         applicationId "com.chaz.pistonlistener"
         minSdk 26
         targetSdk 36
-        versionCode 3
-        versionName "0.2.0"
+        versionCode 4
+        versionName "0.3.0"
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    def javaHomePath = System.getenv("JAVA_HOME") ?: System.getProperty("java.home")
+    def javacName = System.getProperty("os.name").toLowerCase().contains("windows") ? "javac.exe" : "javac"
+    def javacPath = new File(javaHomePath, "bin/${javacName}")
+    options.fork = true
+    options.incremental = false
+    if (javacPath.exists()) {
+        options.forkOptions.executable = javacPath.absolutePath
     }
 }

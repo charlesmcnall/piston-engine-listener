@@ -25,13 +25,20 @@ public final class FftAnalyzer {
 
     public synchronized SpectrumFeatures analyze(short[] pcm) {
         double sumSquares = 0.0;
+        double peakAbs = 0.0;
         int clipped = 0;
+        int flatTop = 0;
 
         for (int i = 0; i < fftSize; i++) {
             double sample = pcm[i] / 32768.0;
+            double absSample = Math.abs(sample);
             sumSquares += sample * sample;
+            peakAbs = Math.max(peakAbs, absSample);
             if (Math.abs(pcm[i]) >= 32760) {
                 clipped++;
+            }
+            if (i > 0 && Math.abs(pcm[i]) >= 32000 && Math.abs(pcm[i] - pcm[i - 1]) <= 1) {
+                flatTop++;
             }
             real[i] = sample * window[i];
             imaginary[i] = 0.0;
@@ -84,7 +91,10 @@ public final class FftAnalyzer {
         double safeTotal = Math.max(totalEnergy, 1.0e-12);
         double rms = Math.sqrt(sumSquares / fftSize);
         double rmsDbfs = 20.0 * Math.log10(Math.max(rms, 1.0e-9));
+        double peakDbfs = 20.0 * Math.log10(Math.max(peakAbs, 1.0e-9));
+        double crestFactorDb = peakDbfs - rmsDbfs;
         double clippedPercent = 100.0 * clipped / fftSize;
+        double flatTopPercent = 100.0 * flatTop / fftSize;
         double centroidHz = centroidWeighted / safeTotal;
 
         return new SpectrumFeatures(
@@ -92,7 +102,10 @@ public final class FftAnalyzer {
                 "Unknown",
                 0.0,
                 rmsDbfs,
+                peakDbfs,
+                crestFactorDb,
                 clippedPercent,
+                flatTopPercent,
                 dominantHz,
                 centroidHz,
                 band20To120 / safeTotal,
@@ -179,4 +192,3 @@ public final class FftAnalyzer {
         }
     }
 }
-

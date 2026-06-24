@@ -28,6 +28,8 @@ public final class SessionLogger {
     private long frameCount;
     private double sumRpm;
     private double sumRms;
+    private double sumPeakDbfs;
+    private double sumCrestFactorDb;
     private double sumDominantHz;
     private double sumCentroidHz;
     private double sumBand20To120;
@@ -35,6 +37,7 @@ public final class SessionLogger {
     private double sumBand600To2500;
     private double sumBand2500To6000;
     private double maxClipPercent;
+    private double maxFlatTopPercent;
 
     public void start(Context context, String sessionPhase) throws IOException {
         File sessionsDir = new File(context.getFilesDir(), "sessions");
@@ -48,6 +51,8 @@ public final class SessionLogger {
         frameCount = 0L;
         sumRpm = 0.0;
         sumRms = 0.0;
+        sumPeakDbfs = 0.0;
+        sumCrestFactorDb = 0.0;
         sumDominantHz = 0.0;
         sumCentroidHz = 0.0;
         sumBand20To120 = 0.0;
@@ -55,6 +60,7 @@ public final class SessionLogger {
         sumBand600To2500 = 0.0;
         sumBand2500To6000 = 0.0;
         maxClipPercent = 0.0;
+        maxFlatTopPercent = 0.0;
 
         String safePhase = phase.replace(' ', '-').toLowerCase(Locale.US);
         sessionFile = new File(sessionsDir, "session-" + FILE_TIME.format(Instant.ofEpochMilli(startedMillis)) + "-" + safePhase + ".csv");
@@ -80,6 +86,8 @@ public final class SessionLogger {
         frameCount++;
         sumRpm += features.rpm;
         sumRms += features.rmsDbfs;
+        sumPeakDbfs += features.peakDbfs;
+        sumCrestFactorDb += features.crestFactorDb;
         sumDominantHz += features.dominantHz;
         sumCentroidHz += features.centroidHz;
         sumBand20To120 += features.band20To120;
@@ -87,9 +95,10 @@ public final class SessionLogger {
         sumBand600To2500 += features.band600To2500;
         sumBand2500To6000 += features.band2500To6000;
         maxClipPercent = Math.max(maxClipPercent, features.clippedPercent);
+        maxFlatTopPercent = Math.max(maxFlatTopPercent, features.flatTopPercent);
     }
 
-    public synchronized void finish() throws IOException {
+    public synchronized void finish(SignalQualityGate.Snapshot signalQuality) throws IOException {
         if (summaryFile == null || frameCount == 0L) {
             return;
         }
@@ -105,7 +114,7 @@ public final class SessionLogger {
             }
             writer.write(String.format(
                     Locale.US,
-                    "%s,%s,%d,%d,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f",
+                    "%s,%s,%d,%d,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.4f,%s",
                     startedIso,
                     phase,
                     durationMillis,
@@ -118,7 +127,11 @@ public final class SessionLogger {
                     sumBand20To120 / frames,
                     sumBand120To600 / frames,
                     sumBand600To2500 / frames,
-                    sumBand2500To6000 / frames
+                    sumBand2500To6000 / frames,
+                    sumPeakDbfs / frames,
+                    sumCrestFactorDb / frames,
+                    maxFlatTopPercent,
+                    SpectrumFeatures.sanitizeCsv(signalQuality == null ? "Unknown" : signalQuality.label)
             ));
             writer.newLine();
         }
@@ -203,7 +216,8 @@ public final class SessionLogger {
 
     private static String summaryHeader() {
         return "startedAt,phase,durationMillis,frameCount,avgRpm,avgRmsDbfs,maxClipPercent,"
-                + "avgDominantHz,avgCentroidHz,avgBand20_120,avgBand120_600,avgBand600_2500,avgBand2500_6000";
+                + "avgDominantHz,avgCentroidHz,avgBand20_120,avgBand120_600,avgBand600_2500,avgBand2500_6000,"
+                + "avgPeakDbfs,avgCrestFactorDb,maxFlatTopPercent,signalQuality";
     }
 
     public static final class Baseline {
@@ -257,4 +271,3 @@ public final class SessionLogger {
         }
     }
 }
-
