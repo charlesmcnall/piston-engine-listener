@@ -2,6 +2,7 @@ package com.chaz.pistonlistener;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -23,6 +24,29 @@ import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_RECORD_AUDIO = 7001;
+    private static final String USER_INSTRUCTIONS =
+            "1. Install\n"
+                    + "Download the APK from the GitHub release, open it on the Android phone, allow install unknown apps if prompted, then launch Piston Listener. Grant microphone permission.\n\n"
+                    + "2. Place the Phone Consistently\n"
+                    + "Put the phone in the same cabin location every time, with the mic unobstructed. Do not use Bluetooth audio. Consistent placement matters more than perfect placement.\n\n"
+                    + "3. Record a Stable Engine Phase\n"
+                    + "Select the phase: Idle, Run-up, Climb, Cruise, or Descent. Enter RPM if known. Tap Record, wait until the engine is stable, record about 30-60 seconds, then tap Stop.\n\n"
+                    + "4. Watch Clipping\n"
+                    + "If the app shows Input clipping, that recording is not useful. Move the phone farther from loud vents, speakers, or panels and try again. Clipping means the mic is overloaded.\n\n"
+                    + "5. Build a Baseline\n"
+                    + "The app needs 3 saved sessions per phase before the trend score becomes useful. Example: do three good Idle recordings before trusting Idle trend changes.\n\n"
+                    + "6. Read the Screen\n"
+                    + "RMS: overall loudness.\n"
+                    + "Clipping: overloaded audio percentage. Should stay near zero.\n"
+                    + "Dominant: strongest frequency.\n"
+                    + "Centroid: center of spectral energy.\n"
+                    + "Bands: energy split across frequency ranges.\n"
+                    + "Baseline: how many prior sessions exist for that phase.\n"
+                    + "Trend: rough change score versus previous recordings for that phase.\n\n"
+                    + "7. Interpret Carefully\n"
+                    + "A high trend score means this sounds different than the baseline, not that the engine is failing. Use it as a prompt to inspect, compare with engine monitor data, or ask a mechanic.\n\n"
+                    + "8. Safety\n"
+                    + "This is advisory trend-logging software only. It is not an approved engine monitor, maintenance tool, or flight safety system. Use normal aircraft instruments and maintenance procedures first.";
 
     private final EngineAudioRecorder recorder = new EngineAudioRecorder();
 
@@ -114,10 +138,22 @@ public final class MainActivity extends Activity {
         rpmInput.setGravity(Gravity.CENTER);
         controls.addView(rpmInput, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.8f));
 
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        content.addView(actions, matchWrap());
+
         recordButton = new Button(this);
         recordButton.setText("Record");
         recordButton.setOnClickListener(view -> toggleRecording());
-        content.addView(recordButton, matchWrap());
+        actions.addView(recordButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        Button readMeButton = new Button(this);
+        readMeButton.setText("Read Me");
+        readMeButton.setOnClickListener(view -> showInstructions());
+        LinearLayout.LayoutParams readMeParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        readMeParams.setMargins(dp(10), 0, 0, 0);
+        actions.addView(readMeButton, readMeParams);
 
         spectrumView = new SpectrumView(this);
         LinearLayout.LayoutParams spectrumParams = new LinearLayout.LayoutParams(
@@ -162,6 +198,20 @@ public final class MainActivity extends Activity {
         } else {
             startRecording();
         }
+    }
+
+    private void showInstructions() {
+        TextView instructions = text(USER_INSTRUCTIONS, 15, Color.rgb(15, 23, 42), Typeface.NORMAL);
+        instructions.setPadding(dp(18), dp(12), dp(18), dp(4));
+
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.addView(instructions);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Basic User Instructions")
+                .setView(scrollView)
+                .setPositiveButton("Close", null)
+                .show();
     }
 
     private void startRecording() {
@@ -331,4 +381,3 @@ public final class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 }
-
