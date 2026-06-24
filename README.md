@@ -11,11 +11,12 @@ Android prototype for piston-aircraft audio trend logging.
 - Per-frame RMS, clipping, dominant frequency, centroid, and band ratios.
 - One-tap phase buttons for Idle, Run-up, Climb, Cruise, and Descent.
 - Auto-stop timed captures with a configurable default duration.
+- Engine selector with Jabiru 3300 default plus Jabiru 2200, Rotax 912, AeroVee/VW, and Custom.
 - Per-phase target RPM settings.
 - Signal-quality gate for peak level, clipping, crest factor, flat-top detection, and compression suspicion.
 - Preflight checks for quiet cabin, idle, and run-up signal quality.
 - Per-phase CSV session logs and summaries.
-- Simple baseline score after three prior sessions for the same phase.
+- Simple baseline score after three prior sessions for the same engine and phase.
 
 This is advisory data collection software. It is not an approved engine monitor, maintenance release tool, or flight safety system.
 
@@ -49,14 +50,15 @@ Enable USB debugging on the phone, connect it, then run:
 
 ## Basic use
 
-1. Open **Settings** and set the default capture duration. The default is 30 seconds.
-2. Set target RPMs for each phase you plan to capture. Leave RPM blank or 0 if unknown.
-3. Tap **Preflight** and run the quiet cabin, idle, and run-up checks before collecting trend data.
-4. Put the phone in the same cabin location every time, with the mic unobstructed.
-5. Tap a phase button once. The app records for the configured duration, stops automatically, and saves.
-6. Use **Cancel Capture** only when the wrong phase or a bad setup was captured.
-7. Re-record if the signal gate reports clipping, too quiet, or compression suspected.
-8. Capture at least three good sessions for a phase before treating the trend score as meaningful.
+1. Open **Settings** and choose the engine. The default is Jabiru 3300.
+2. Set the default capture duration. The default is 30 seconds.
+3. Set target RPMs for each phase you plan to capture. Leave RPM blank or 0 if unknown.
+4. Tap **Preflight** and run the quiet cabin, idle, and run-up checks before collecting trend data.
+5. Put the phone in the same cabin location every time, with the mic unobstructed.
+6. Tap a phase button once. The app records for the configured duration, stops automatically, and saves.
+7. Use **Cancel Capture** only when the wrong phase or a bad setup was captured.
+8. Re-record if the signal gate reports clipping, too quiet, or compression suspected.
+9. Capture at least three good sessions for an engine and phase before treating the trend score as meaningful.
 
 ## Logged data
 
@@ -65,7 +67,7 @@ On-device data is written under the app-private `files/sessions` directory:
 - `session-*.csv`: frame-level FFT features.
 - `summary.csv`: one row per completed recording.
 
-The app compares each phase against previous summaries for the same phase. The baseline is considered ready after three accepted sessions. The `rpm` column stores the configured target RPM for that phase. Captures with failed signal quality are not added to the baseline summary.
+The app compares each phase against previous summaries for the same engine and phase. The baseline is considered ready after three accepted sessions. The `engine` column stores the selected engine tag, and the `rpm` column stores the configured target RPM for that phase. Captures with failed signal quality are not added to the baseline summary.
 
 ## Next build slice
 

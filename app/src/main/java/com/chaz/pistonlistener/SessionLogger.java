@@ -17,6 +17,7 @@ import java.util.Locale;
 
 public final class SessionLogger {
     private static final String SUMMARY_FILE_NAME = "summary.csv";
+    private static final String LEGACY_ENGINE = "Jabiru 3300";
     private static final DateTimeFormatter FILE_TIME =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.systemDefault());
 
@@ -25,6 +26,7 @@ public final class SessionLogger {
     private long startedMillis;
     private String startedIso;
     private String phase;
+    private String engine;
     private long frameCount;
     private double sumRpm;
     private double sumRms;
@@ -39,7 +41,7 @@ public final class SessionLogger {
     private double maxClipPercent;
     private double maxFlatTopPercent;
 
-    public void start(Context context, String sessionPhase) throws IOException {
+    public void start(Context context, String sessionPhase, String sessionEngine) throws IOException {
         File sessionsDir = new File(context.getFilesDir(), "sessions");
         if (!sessionsDir.exists() && !sessionsDir.mkdirs()) {
             throw new IOException("Unable to create sessions directory.");
@@ -48,6 +50,7 @@ public final class SessionLogger {
         startedMillis = System.currentTimeMillis();
         startedIso = Instant.ofEpochMilli(startedMillis).toString();
         phase = SpectrumFeatures.sanitizeCsv(sessionPhase);
+        engine = SpectrumFeatures.sanitizeCsv(sessionEngine);
         frameCount = 0L;
         sumRpm = 0.0;
         sumRms = 0.0;
@@ -63,7 +66,8 @@ public final class SessionLogger {
         maxFlatTopPercent = 0.0;
 
         String safePhase = phase.replace(' ', '-').toLowerCase(Locale.US);
-        sessionFile = new File(sessionsDir, "session-" + FILE_TIME.format(Instant.ofEpochMilli(startedMillis)) + "-" + safePhase + ".csv");
+        String safeEngine = fileSegment(engine);
+        sessionFile = new File(sessionsDir, "session-" + FILE_TIME.format(Instant.ofEpochMilli(startedMillis)) + "-" + safeEngine + "-" + safePhase + ".csv");
         summaryFile = new File(sessionsDir, SUMMARY_FILE_NAME);
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(sessionFile, false))) {
@@ -103,7 +107,8 @@ public final class SessionLogger {
             return;
         }
 
-        boolean writeHeader = !summaryFile.exists();
+        ensureSummaryHeader();
+        boolean writeHeader = !summaryFile.exists() || summaryFile.length() == 0L;
         long durationMillis = Math.max(0L, System.currentTimeMillis() - startedMillis);
         double frames = Math.max(1.0, frameCount);
 
@@ -114,7 +119,7 @@ public final class SessionLogger {
             }
             writer.write(String.format(
                     Locale.US,
-                    "%s,%s,%d,%d,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.4f,%s",
+                    "%s,%s,%d,%d,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.4f,%s,%s",
                     startedIso,
                     phase,
                     durationMillis,
@@ -131,7 +136,8 @@ public final class SessionLogger {
                     sumPeakDbfs / frames,
                     sumCrestFactorDb / frames,
                     maxFlatTopPercent,
-                    SpectrumFeatures.sanitizeCsv(signalQuality == null ? "Unknown" : signalQuality.label)
+                    SpectrumFeatures.sanitizeCsv(signalQuality == null ? "Unknown" : signalQuality.label),
+                    engine
             ));
             writer.newLine();
         }
@@ -141,7 +147,7 @@ public final class SessionLogger {
         return sessionFile == null ? "" : sessionFile.getName();
     }
 
-    public static Baseline loadBaseline(Context context, String phase) {
+    public static Baseline loadBaseline(Context context, String phase, String engine) {
         File summary = new File(new File(context.getFilesDir(), "sessions"), SUMMARY_FILE_NAME);
         if (!summary.exists()) {
             return Baseline.empty();
@@ -149,6 +155,7 @@ public final class SessionLogger {
 
         List<double[]> rows = new ArrayList<>();
         String safePhase = SpectrumFeatures.sanitizeCsv(phase);
+        String safeEngine = SpectrumFeatures.sanitizeCsv(engine);
 
         try (BufferedReader reader = new BufferedReader(new FileReader(summary))) {
             String line;
@@ -160,6 +167,11 @@ public final class SessionLogger {
                 }
                 String[] parts = line.split(",", -1);
                 if (parts.length < 13 || !safePhase.equals(parts[1])) {
+                    continue;
+                }
+
+                String rowEngine = parts.length >= 18 ? SpectrumFeatures.sanitizeCsv(parts[17]) : LEGACY_ENGINE;
+                if (!safeEngine.equals(rowEngine)) {
                     continue;
                 }
 
@@ -217,7 +229,40 @@ public final class SessionLogger {
     private static String summaryHeader() {
         return "startedAt,phase,durationMillis,frameCount,avgRpm,avgRmsDbfs,maxClipPercent,"
                 + "avgDominantHz,avgCentroidHz,avgBand20_120,avgBand120_600,avgBand600_2500,avgBand2500_6000,"
-                + "avgPeakDbfs,avgCrestFactorDb,maxFlatTopPercent,signalQuality";
+                + "avgPeakDbfs,avgCrestFactorDb,maxFlatTopPercent,signalQuality,engine";
+    }
+
+    private void ensureSummaryHeader() throws IOException {
+        if (summaryFile == null || !summaryFile.exists() || summaryFile.length() == 0L) {
+            return;
+        }
+
+        List<String> lines = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader(summaryFile))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lines.add(line);
+            }
+        }
+
+        if (lines.isEmpty() || lines.get(0).endsWith(",engine")) {
+            return;
+        }
+
+        lines.set(0, summaryHeader());
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(summaryFile, false))) {
+            for (String line : lines) {
+                writer.write(line);
+                writer.newLine();
+            }
+        }
+    }
+
+    private static String fileSegment(String value) {
+        String clean = SpectrumFeatures.sanitizeCsv(value).toLowerCase(Locale.US);
+        clean = clean.replaceAll("[^a-z0-9]+", "-");
+        clean = clean.replaceAll("^-+|-+$", "");
+        return clean.isEmpty() ? "unknown" : clean;
     }
 
     public static final class Baseline {

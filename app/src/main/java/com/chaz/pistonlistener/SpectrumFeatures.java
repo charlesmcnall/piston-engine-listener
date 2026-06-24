@@ -6,6 +6,7 @@ public final class SpectrumFeatures {
     public final long timestampMillis;
     public final String phase;
     public final double rpm;
+    public final String engine;
     public final double rmsDbfs;
     public final double peakDbfs;
     public final double crestFactorDb;
@@ -24,6 +25,7 @@ public final class SpectrumFeatures {
             long timestampMillis,
             String phase,
             double rpm,
+            String engine,
             double rmsDbfs,
             double peakDbfs,
             double crestFactorDb,
@@ -41,6 +43,7 @@ public final class SpectrumFeatures {
         this.timestampMillis = timestampMillis;
         this.phase = phase;
         this.rpm = rpm;
+        this.engine = engine;
         this.rmsDbfs = rmsDbfs;
         this.peakDbfs = peakDbfs;
         this.crestFactorDb = crestFactorDb;
@@ -56,11 +59,12 @@ public final class SpectrumFeatures {
         this.spectrum = spectrum;
     }
 
-    public SpectrumFeatures withContext(String nextPhase, double nextRpm, double nextTrendScore) {
+    public SpectrumFeatures withContext(String nextPhase, double nextRpm, String nextEngine, double nextTrendScore) {
         return new SpectrumFeatures(
                 timestampMillis,
                 nextPhase,
                 nextRpm,
+                nextEngine,
                 rmsDbfs,
                 peakDbfs,
                 crestFactorDb,
@@ -80,13 +84,13 @@ public final class SpectrumFeatures {
     public static String csvHeader() {
         return "timestampMillis,elapsedMillis,phase,rpm,rmsDbfs,clippedPercent,dominantHz,centroidHz,"
                 + "band20_120,band120_600,band600_2500,band2500_6000,trendScore,"
-                + "peakDbfs,crestFactorDb,flatTopPercent,signalQuality";
+                + "peakDbfs,crestFactorDb,flatTopPercent,signalQuality,engine";
     }
 
     public String toCsvLine(long elapsedMillis) {
         return String.format(
                 Locale.US,
-                "%d,%d,%s,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.3f,%.4f,%s",
+                "%d,%d,%s,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.3f,%.4f,%s,%s",
                 timestampMillis,
                 elapsedMillis,
                 sanitizeCsv(phase),
@@ -103,7 +107,8 @@ public final class SpectrumFeatures {
                 peakDbfs,
                 crestFactorDb,
                 flatTopPercent,
-                sanitizeCsv(SignalQualityGate.classifyFrame(this).label)
+                sanitizeCsv(SignalQualityGate.classifyFrame(this).label),
+                sanitizeCsv(engine)
         );
     }
 

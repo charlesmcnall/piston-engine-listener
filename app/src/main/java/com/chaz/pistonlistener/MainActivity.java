@@ -12,10 +12,14 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 import java.io.IOException;
@@ -27,17 +31,28 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_RECORD_AUDIO = 7001;
     private static final String PREFS_NAME = "capture_settings";
     private static final String KEY_CAPTURE_SECONDS = "capture_seconds";
+    private static final String KEY_ENGINE_OPTION = "engine_option";
+    private static final String KEY_CUSTOM_ENGINE = "custom_engine";
     private static final int DEFAULT_CAPTURE_SECONDS = 30;
     private static final int MIN_CAPTURE_SECONDS = 5;
     private static final int MAX_CAPTURE_SECONDS = 300;
     private static final int PREFLIGHT_CAPTURE_SECONDS = 8;
+    private static final String DEFAULT_ENGINE = "Jabiru 3300";
+    private static final String CUSTOM_ENGINE_OPTION = "Custom";
+    private static final String[] ENGINE_OPTIONS = new String[]{
+            DEFAULT_ENGINE,
+            "Jabiru 2200",
+            "Rotax 912",
+            "AeroVee/VW",
+            CUSTOM_ENGINE_OPTION
+    };
     private static final String[] PHASES = new String[]{"Idle", "Run-up", "Climb", "Cruise", "Descent"};
     private static final String[] PREFLIGHT_STEPS = new String[]{"Quiet cabin", "Idle", "Run-up"};
     private static final String USER_INSTRUCTIONS =
             "1. Install\n"
                     + "Download the APK from the GitHub release, open it on the Android phone, allow install unknown apps if prompted, then launch Piston Listener. Grant microphone permission.\n\n"
                     + "2. Configure Targets\n"
-                    + "Open Settings, set the default capture time, and enter the target RPM for each engine phase you plan to record. Leave RPM blank or 0 if you do not know it yet.\n\n"
+                    + "Open Settings, choose the engine, set the default capture time, and enter the target RPM for each engine phase you plan to record. Leave RPM blank or 0 if you do not know it yet.\n\n"
                     + "3. Run Preflight\n"
                     + "Tap Preflight before collecting trend data. The app checks quiet cabin, idle, and run-up levels and reports Good, Too quiet, Clipping, or Compression suspected.\n\n"
                     + "4. Place the Phone Consistently\n"
@@ -49,6 +64,7 @@ public final class MainActivity extends Activity {
                     + "7. Build a Baseline\n"
                     + "The app needs 3 saved sessions per phase before the trend score becomes useful. Example: do three good Idle recordings before trusting Idle trend changes.\n\n"
                     + "8. Read the Screen\n"
+                    + "Engine: the tag saved with new captures.\n"
                     + "Signal: the current quality gate result.\n"
                     + "RMS: overall loudness.\n"
                     + "Clipping: overloaded audio percentage. Should stay near zero.\n"
@@ -73,6 +89,7 @@ public final class MainActivity extends Activity {
     private SpectrumView spectrumView;
     private TextView captureText;
     private TextView statusText;
+    private TextView engineText;
     private TextView signalText;
     private TextView rmsText;
     private TextView clipText;
@@ -86,6 +103,7 @@ public final class MainActivity extends Activity {
     private SessionLogger logger;
     private SessionLogger.Baseline baseline = SessionLogger.Baseline.empty();
     private String activePhase = "Idle";
+    private String activeEngineTag = DEFAULT_ENGINE;
     private double activeTargetRpm = 0.0;
     private int activeCaptureSeconds = DEFAULT_CAPTURE_SECONDS;
     private long captureEndsAtMillis = 0L;
@@ -125,6 +143,8 @@ public final class MainActivity extends Activity {
     }
 
     private void buildUi() {
+        activeEngineTag = currentEngineTag();
+
         ScrollView scrollView = new ScrollView(this);
         scrollView.setFillViewport(true);
         scrollView.setBackgroundColor(Color.rgb(248, 250, 252));
@@ -209,6 +229,7 @@ public final class MainActivity extends Activity {
         metrics.setOrientation(LinearLayout.VERTICAL);
         content.addView(metrics, matchWrap());
 
+        engineText = metric("Engine", currentEngineTag());
         signalText = metric("Signal", "--");
         rmsText = metric("RMS", "--");
         clipText = metric("Clipping", "--");
@@ -219,6 +240,7 @@ public final class MainActivity extends Activity {
         trendText = metric("Trend", "--");
         baselineText = metric("Baseline", "--");
 
+        metrics.addView(engineText, matchWrap());
         metrics.addView(signalText, matchWrap());
         metrics.addView(rmsText, matchWrap());
         metrics.addView(clipText, matchWrap());
@@ -235,6 +257,7 @@ public final class MainActivity extends Activity {
 
         setContentView(scrollView);
         refreshPhaseButtons();
+        refreshEngineLabel();
         refreshBaselineLabel();
     }
 
@@ -286,9 +309,10 @@ public final class MainActivity extends Activity {
 
         calibrationCapture = calibration;
         activePhase = phase;
+        activeEngineTag = currentEngineTag();
         activeTargetRpm = targetRpm(phase);
         activeCaptureSeconds = durationSeconds;
-        baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase);
+        baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase, activeEngineTag);
         logger = calibrationCapture ? null : new SessionLogger();
         qualityGate.reset();
         captureCompleting = false;
@@ -296,7 +320,7 @@ public final class MainActivity extends Activity {
 
         if (logger != null) {
             try {
-                logger.start(this, activePhase);
+                logger.start(this, activePhase, activeEngineTag);
             } catch (IOException exception) {
                 statusText.setText("Log start failed: " + exception.getMessage());
                 logger = null;
@@ -316,7 +340,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onFeatures(SpectrumFeatures rawFeatures) {
                 double trend = baseline.score(rawFeatures);
-                SpectrumFeatures features = rawFeatures.withContext(activePhase, activeTargetRpm, trend);
+                SpectrumFeatures features = rawFeatures.withContext(activePhase, activeTargetRpm, activeEngineTag, trend);
                 qualityGate.add(features);
                 updateMetrics(features);
                 if (logger != null) {
@@ -374,7 +398,7 @@ public final class MainActivity extends Activity {
             }
         }
         logger = null;
-        baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase);
+        baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase, activeEngineTag);
 
         if (calibrationCapture && completed) {
             appendPreflightResult(activePhase, signalQuality);
@@ -552,7 +576,43 @@ public final class MainActivity extends Activity {
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(18), dp(8), dp(18), 0);
 
+        TextView engineLabel = text("Engine", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        form.addView(engineLabel, matchWrap());
+
+        Spinner engineSpinner = new Spinner(this);
+        ArrayAdapter<String> engineAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, ENGINE_OPTIONS);
+        engineAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        engineSpinner.setAdapter(engineAdapter);
+        engineSpinner.setSelection(engineOptionIndex(selectedEngineOption()));
+        form.addView(engineSpinner, matchWrap());
+
+        TextView customEngineLabel = text("Custom engine name", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        customEngineLabel.setPadding(0, dp(10), 0, 0);
+        form.addView(customEngineLabel, matchWrap());
+
+        EditText customEngineInput = textInput(customEngineName());
+        boolean customSelected = CUSTOM_ENGINE_OPTION.equals(selectedEngineOption());
+        customEngineInput.setEnabled(customSelected);
+        customEngineInput.setAlpha(customSelected ? 1.0f : 0.45f);
+        form.addView(customEngineInput, matchWrap());
+
+        engineSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                boolean enabled = CUSTOM_ENGINE_OPTION.equals(ENGINE_OPTIONS[position]);
+                customEngineInput.setEnabled(enabled);
+                customEngineInput.setAlpha(enabled ? 1.0f : 0.45f);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                customEngineInput.setEnabled(false);
+                customEngineInput.setAlpha(0.45f);
+            }
+        });
+
         TextView durationLabel = text("Default capture time, seconds", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        durationLabel.setPadding(0, dp(14), 0, 0);
         form.addView(durationLabel, matchWrap());
 
         EditText durationInput = numberInput(String.valueOf(getCaptureSeconds()));
@@ -578,17 +638,34 @@ public final class MainActivity extends Activity {
                 .setView(scrollView)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> {
-                    saveSettings(durationInput, rpmInputs);
+                    saveSettings(durationInput, rpmInputs, engineSpinner, customEngineInput);
                     refreshPhaseButtons();
+                    refreshEngineLabel();
+                    activeEngineTag = currentEngineTag();
+                    baseline = SessionLogger.loadBaseline(this, activePhase, activeEngineTag);
+                    refreshBaselineLabel();
                     statusText.setText("Settings saved");
                 })
                 .show();
     }
 
-    private void saveSettings(EditText durationInput, Map<String, EditText> rpmInputs) {
+    private void saveSettings(
+            EditText durationInput,
+            Map<String, EditText> rpmInputs,
+            Spinner engineSpinner,
+            EditText customEngineInput
+    ) {
         SharedPreferences.Editor editor = prefs().edit();
         int seconds = clamp(parseInt(durationInput.getText().toString(), DEFAULT_CAPTURE_SECONDS), MIN_CAPTURE_SECONDS, MAX_CAPTURE_SECONDS);
         editor.putInt(KEY_CAPTURE_SECONDS, seconds);
+
+        Object selected = engineSpinner.getSelectedItem();
+        String engineOption = selected instanceof String ? (String) selected : DEFAULT_ENGINE;
+        if (!isEngineOption(engineOption)) {
+            engineOption = DEFAULT_ENGINE;
+        }
+        editor.putString(KEY_ENGINE_OPTION, engineOption);
+        editor.putString(KEY_CUSTOM_ENGINE, cleanCustomEngineName(customEngineInput.getText().toString()));
 
         for (String phase : PHASES) {
             EditText input = rpmInputs.get(phase);
@@ -625,11 +702,17 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void refreshEngineLabel() {
+        if (engineText != null) {
+            engineText.setText("Engine   " + currentEngineTag());
+        }
+    }
+
     private void refreshBaselineLabel() {
         if (baseline.isReady()) {
-            baselineText.setText(String.format(Locale.US, "Baseline   %s %d sessions", activePhase, baseline.count));
+            baselineText.setText(String.format(Locale.US, "Baseline   %s %s %d sessions", activeEngineTag, activePhase, baseline.count));
         } else {
-            baselineText.setText(String.format(Locale.US, "Baseline   %s %d / 3", activePhase, baseline.count));
+            baselineText.setText(String.format(Locale.US, "Baseline   %s %s %d / 3", activeEngineTag, activePhase, baseline.count));
         }
     }
 
@@ -656,11 +739,63 @@ public final class MainActivity extends Activity {
         return "target_rpm_" + phase.toLowerCase(Locale.US).replace("-", "_").replace(" ", "_");
     }
 
+    private String selectedEngineOption() {
+        String engineOption = prefs().getString(KEY_ENGINE_OPTION, DEFAULT_ENGINE);
+        return isEngineOption(engineOption) ? engineOption : DEFAULT_ENGINE;
+    }
+
+    private String customEngineName() {
+        return cleanCustomEngineName(prefs().getString(KEY_CUSTOM_ENGINE, ""));
+    }
+
+    private String currentEngineTag() {
+        String engineOption = selectedEngineOption();
+        if (!CUSTOM_ENGINE_OPTION.equals(engineOption)) {
+            return engineOption;
+        }
+
+        String customName = customEngineName();
+        return customName.isEmpty() || "Unknown".equals(customName) ? CUSTOM_ENGINE_OPTION : customName;
+    }
+
+    private int engineOptionIndex(String engineOption) {
+        for (int i = 0; i < ENGINE_OPTIONS.length; i++) {
+            if (ENGINE_OPTIONS[i].equals(engineOption)) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    private boolean isEngineOption(String engineOption) {
+        for (String option : ENGINE_OPTIONS) {
+            if (option.equals(engineOption)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String cleanCustomEngineName(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return "";
+        }
+        return SpectrumFeatures.sanitizeCsv(value);
+    }
+
     private EditText numberInput(String value) {
         EditText editText = new EditText(this);
         editText.setSingleLine(true);
         editText.setText(value);
         editText.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        return editText;
+    }
+
+    private EditText textInput(String value) {
+        EditText editText = new EditText(this);
+        editText.setSingleLine(true);
+        editText.setText(value);
+        editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         return editText;
     }
 
