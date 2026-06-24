@@ -9,6 +9,9 @@ Android prototype for piston-aircraft audio trend logging.
 - 4096-sample Hann-windowed FFT.
 - Live spectrum bars from 0-6 kHz.
 - Per-frame RMS, clipping, dominant frequency, centroid, and band ratios.
+- One-tap phase buttons for Idle, Run-up, Climb, Cruise, and Descent.
+- Auto-stop timed captures with a configurable default duration.
+- Per-phase target RPM settings.
 - Per-phase CSV session logs and summaries.
 - Simple baseline score after three prior sessions for the same phase.
 
@@ -42,6 +45,16 @@ Enable USB debugging on the phone, connect it, then run:
 .\scripts\install-debug.ps1
 ```
 
+## Basic use
+
+1. Open **Settings** and set the default capture duration. The default is 30 seconds.
+2. Set target RPMs for each phase you plan to capture. Leave RPM blank or 0 if unknown.
+3. Put the phone in the same cabin location every time, with the mic unobstructed.
+4. Tap a phase button once. The app records for the configured duration, stops automatically, and saves.
+5. Use **Cancel Capture** only when the wrong phase or a bad setup was captured.
+6. Re-record if clipping appears; clipped sessions are not useful for spectral trends.
+7. Capture at least three good sessions for a phase before treating the trend score as meaningful.
+
 ## Logged data
 
 On-device data is written under the app-private `files/sessions` directory:
@@ -49,7 +62,7 @@ On-device data is written under the app-private `files/sessions` directory:
 - `session-*.csv`: frame-level FFT features.
 - `summary.csv`: one row per completed recording.
 
-The app compares each phase against previous summaries for the same phase. The baseline is considered ready after three saved sessions.
+The app compares each phase against previous summaries for the same phase. The baseline is considered ready after three saved sessions. The `rpm` column stores the configured target RPM for that phase.
 
 ## Next build slice
 
