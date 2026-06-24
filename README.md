@@ -11,7 +11,7 @@ Android prototype for piston-aircraft audio trend logging.
 - Per-frame RMS, clipping, dominant frequency, centroid, and band ratios.
 - One-tap phase buttons for Idle, Run-up, Climb, Cruise, and Descent.
 - Auto-stop timed captures with a configurable default duration.
-- Engine selector with Jabiru 3300 default plus Jabiru 2200, Rotax 912, AeroVee/VW, and Custom.
+- Engine selector with Jabiru 3300 default plus common Jabiru, AeroVee/VW, Continental, Lycoming, Rotax, and Custom tags.
 - Per-phase target RPM settings.
 - Signal-quality gate for peak level, clipping, crest factor, flat-top detection, and compression suspicion.
 - Preflight checks for quiet cabin, idle, and run-up signal quality.
