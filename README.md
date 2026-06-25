@@ -69,10 +69,15 @@ On-device data is written under the app-private `files/sessions` directory:
 
 The app compares each phase against previous summaries for the same engine and phase. The baseline is considered ready after three accepted sessions. The `engine` column stores the selected engine tag, and the `rpm` column stores the configured target RPM for that phase. Captures with failed signal quality are not added to the baseline summary.
 
+## Online catalog
+
+Supabase setup files live in `supabase/`, with setup notes in `docs/supabase-setup.md`. The intended online model is a private `engine-samples` storage bucket for WAV/CSV files plus Postgres catalog rows in `public.captures`.
+
 ## Next build slice
 
 - Export/share CSV files from the phone.
 - Add WAV snippet capture for forensic review.
+- Add automatic Supabase upload for accepted captures.
 - Add phase-specific RPM normalization.
 - Add a foreground recording service.
 - Add a calibration screen for quiet cabin, idle, and run-up reference captures.

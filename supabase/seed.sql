@@ -1,0 +1,1 @@
+-- Intentionally empty. Capture catalog data is created by the Android app.
