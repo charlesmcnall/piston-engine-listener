@@ -27,6 +27,9 @@ public final class SessionLogger {
     private String startedIso;
     private String phase;
     private String engine;
+    private double tmohHours;
+    private String knownIssueTags;
+    private String knownIssueNotes;
     private long frameCount;
     private double sumRpm;
     private double sumRms;
@@ -41,7 +44,14 @@ public final class SessionLogger {
     private double maxClipPercent;
     private double maxFlatTopPercent;
 
-    public void start(Context context, String sessionPhase, String sessionEngine) throws IOException {
+    public void start(
+            Context context,
+            String sessionPhase,
+            String sessionEngine,
+            double sessionTmohHours,
+            String sessionKnownIssueTags,
+            String sessionKnownIssueNotes
+    ) throws IOException {
         File sessionsDir = new File(context.getFilesDir(), "sessions");
         if (!sessionsDir.exists() && !sessionsDir.mkdirs()) {
             throw new IOException("Unable to create sessions directory.");
@@ -51,6 +61,9 @@ public final class SessionLogger {
         startedIso = Instant.ofEpochMilli(startedMillis).toString();
         phase = SpectrumFeatures.sanitizeCsv(sessionPhase);
         engine = SpectrumFeatures.sanitizeCsv(sessionEngine);
+        tmohHours = Math.max(0.0, sessionTmohHours);
+        knownIssueTags = SpectrumFeatures.sanitizeCsv(sessionKnownIssueTags);
+        knownIssueNotes = SpectrumFeatures.sanitizeOptionalCsv(sessionKnownIssueNotes);
         frameCount = 0L;
         sumRpm = 0.0;
         sumRms = 0.0;
@@ -119,7 +132,7 @@ public final class SessionLogger {
             }
             writer.write(String.format(
                     Locale.US,
-                    "%s,%s,%d,%d,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.4f,%s,%s",
+                    "%s,%s,%d,%d,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.4f,%s,%s,%.1f,%s,%s",
                     startedIso,
                     phase,
                     durationMillis,
@@ -137,7 +150,10 @@ public final class SessionLogger {
                     sumCrestFactorDb / frames,
                     maxFlatTopPercent,
                     SpectrumFeatures.sanitizeCsv(signalQuality == null ? "Unknown" : signalQuality.label),
-                    engine
+                    engine,
+                    tmohHours,
+                    knownIssueTags,
+                    knownIssueNotes
             ));
             writer.newLine();
         }
@@ -229,7 +245,7 @@ public final class SessionLogger {
     private static String summaryHeader() {
         return "startedAt,phase,durationMillis,frameCount,avgRpm,avgRmsDbfs,maxClipPercent,"
                 + "avgDominantHz,avgCentroidHz,avgBand20_120,avgBand120_600,avgBand600_2500,avgBand2500_6000,"
-                + "avgPeakDbfs,avgCrestFactorDb,maxFlatTopPercent,signalQuality,engine";
+                + "avgPeakDbfs,avgCrestFactorDb,maxFlatTopPercent,signalQuality,engine,tmohHours,knownIssueTags,knownIssueNotes";
     }
 
     private void ensureSummaryHeader() throws IOException {
@@ -245,7 +261,7 @@ public final class SessionLogger {
             }
         }
 
-        if (lines.isEmpty() || lines.get(0).endsWith(",engine")) {
+        if (lines.isEmpty() || lines.get(0).endsWith(",knownIssueNotes")) {
             return;
         }
 

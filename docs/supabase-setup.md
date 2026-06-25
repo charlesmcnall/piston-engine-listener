@@ -35,6 +35,8 @@ The migration creates:
 - Private storage bucket `engine-samples`
 - Row-level security policies so authenticated users can access only their own rows/files
 
+Capture rows include engine-condition metadata such as `tmoh_hours`, `known_issue_tags`, and `known_issue_notes` so uploaded samples can be filtered by overhaul time and known defects.
+
 ## Storage Path Convention
 
 The app should upload files under the authenticated user's ID:

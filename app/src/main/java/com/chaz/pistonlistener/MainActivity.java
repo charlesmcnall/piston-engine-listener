@@ -16,6 +16,7 @@ import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -24,8 +25,10 @@ import android.widget.TextView;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_RECORD_AUDIO = 7001;
@@ -33,6 +36,9 @@ public final class MainActivity extends Activity {
     private static final String KEY_CAPTURE_SECONDS = "capture_seconds";
     private static final String KEY_ENGINE_OPTION = "engine_option";
     private static final String KEY_CUSTOM_ENGINE = "custom_engine";
+    private static final String KEY_TMOH_HOURS = "tmoh_hours";
+    private static final String KEY_KNOWN_ISSUE_TAGS = "known_issue_tags";
+    private static final String KEY_KNOWN_ISSUE_NOTES = "known_issue_notes";
     private static final int DEFAULT_CAPTURE_SECONDS = 30;
     private static final int MIN_CAPTURE_SECONDS = 5;
     private static final int MAX_CAPTURE_SECONDS = 300;
@@ -75,13 +81,26 @@ public final class MainActivity extends Activity {
             "Rotax 916 iS",
             CUSTOM_ENGINE_OPTION
     };
+    private static final String NO_KNOWN_ISSUES = "None known";
+    private static final String[] KNOWN_ISSUE_OPTIONS = new String[]{
+            NO_KNOWN_ISSUES,
+            "Oil leak or high oil consumption",
+            "Low compression",
+            "Cylinder or valve concern",
+            "Ignition or magneto issue",
+            "Carburetor or fuel issue",
+            "Cooling or CHT concern",
+            "Exhaust leak",
+            "Rough running or vibration",
+            "Gearbox or propeller drive concern"
+    };
     private static final String[] PHASES = new String[]{"Idle", "Run-up", "Climb", "Cruise", "Descent"};
     private static final String[] PREFLIGHT_STEPS = new String[]{"Quiet cabin", "Idle", "Run-up"};
     private static final String USER_INSTRUCTIONS =
             "1. Install\n"
                     + "Download the APK from the GitHub release, open it on the Android phone, allow install unknown apps if prompted, then launch Piston Listener. Grant microphone permission.\n\n"
                     + "2. Configure Targets\n"
-                    + "Open Settings, choose the engine, set the default capture time, and enter the target RPM for each engine phase you plan to record. Leave RPM blank or 0 if you do not know it yet.\n\n"
+                    + "Open Settings, choose the engine, enter TMOH hours, tag any known engine issues, set the default capture time, and enter target RPM for each phase. Leave RPM blank or 0 if you do not know it yet.\n\n"
                     + "3. Run Preflight\n"
                     + "Tap Preflight before collecting trend data. The app checks quiet cabin, idle, and run-up levels and reports Good, Too quiet, Clipping, or Compression suspected.\n\n"
                     + "4. Place the Phone Consistently\n"
@@ -94,6 +113,8 @@ public final class MainActivity extends Activity {
                     + "The app needs 3 saved sessions per phase before the trend score becomes useful. Example: do three good Idle recordings before trusting Idle trend changes.\n\n"
                     + "8. Read the Screen\n"
                     + "Engine: the tag saved with new captures.\n"
+                    + "TMOH: time since major overhaul hours saved with new captures.\n"
+                    + "Issues: known issue tags saved with new captures.\n"
                     + "Signal: the current quality gate result.\n"
                     + "RMS: overall loudness.\n"
                     + "Clipping: overloaded audio percentage. Should stay near zero.\n"
@@ -119,6 +140,8 @@ public final class MainActivity extends Activity {
     private TextView captureText;
     private TextView statusText;
     private TextView engineText;
+    private TextView tmohText;
+    private TextView issueText;
     private TextView signalText;
     private TextView rmsText;
     private TextView clipText;
@@ -133,6 +156,9 @@ public final class MainActivity extends Activity {
     private SessionLogger.Baseline baseline = SessionLogger.Baseline.empty();
     private String activePhase = "Idle";
     private String activeEngineTag = DEFAULT_ENGINE;
+    private double activeTmohHours = 0.0;
+    private String activeKnownIssueTags = NO_KNOWN_ISSUES;
+    private String activeKnownIssueNotes = "";
     private double activeTargetRpm = 0.0;
     private int activeCaptureSeconds = DEFAULT_CAPTURE_SECONDS;
     private long captureEndsAtMillis = 0L;
@@ -259,6 +285,8 @@ public final class MainActivity extends Activity {
         content.addView(metrics, matchWrap());
 
         engineText = metric("Engine", currentEngineTag());
+        tmohText = metric("TMOH", tmohLabel(currentTmohHours()));
+        issueText = metric("Issues", currentKnownIssueTags());
         signalText = metric("Signal", "--");
         rmsText = metric("RMS", "--");
         clipText = metric("Clipping", "--");
@@ -270,6 +298,8 @@ public final class MainActivity extends Activity {
         baselineText = metric("Baseline", "--");
 
         metrics.addView(engineText, matchWrap());
+        metrics.addView(tmohText, matchWrap());
+        metrics.addView(issueText, matchWrap());
         metrics.addView(signalText, matchWrap());
         metrics.addView(rmsText, matchWrap());
         metrics.addView(clipText, matchWrap());
@@ -286,7 +316,7 @@ public final class MainActivity extends Activity {
 
         setContentView(scrollView);
         refreshPhaseButtons();
-        refreshEngineLabel();
+        refreshMetadataLabels();
         refreshBaselineLabel();
     }
 
@@ -339,6 +369,9 @@ public final class MainActivity extends Activity {
         calibrationCapture = calibration;
         activePhase = phase;
         activeEngineTag = currentEngineTag();
+        activeTmohHours = currentTmohHours();
+        activeKnownIssueTags = currentKnownIssueTags();
+        activeKnownIssueNotes = currentKnownIssueNotes();
         activeTargetRpm = targetRpm(phase);
         activeCaptureSeconds = durationSeconds;
         baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase, activeEngineTag);
@@ -349,7 +382,7 @@ public final class MainActivity extends Activity {
 
         if (logger != null) {
             try {
-                logger.start(this, activePhase, activeEngineTag);
+                logger.start(this, activePhase, activeEngineTag, activeTmohHours, activeKnownIssueTags, activeKnownIssueNotes);
             } catch (IOException exception) {
                 statusText.setText("Log start failed: " + exception.getMessage());
                 logger = null;
@@ -369,7 +402,15 @@ public final class MainActivity extends Activity {
             @Override
             public void onFeatures(SpectrumFeatures rawFeatures) {
                 double trend = baseline.score(rawFeatures);
-                SpectrumFeatures features = rawFeatures.withContext(activePhase, activeTargetRpm, activeEngineTag, trend);
+                SpectrumFeatures features = rawFeatures.withContext(
+                        activePhase,
+                        activeTargetRpm,
+                        activeEngineTag,
+                        activeTmohHours,
+                        activeKnownIssueTags,
+                        activeKnownIssueNotes,
+                        trend
+                );
                 qualityGate.add(features);
                 updateMetrics(features);
                 if (logger != null) {
@@ -640,6 +681,36 @@ public final class MainActivity extends Activity {
             }
         });
 
+        TextView tmohLabel = text("TMOH / TSMOH hours", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        tmohLabel.setPadding(0, dp(14), 0, 0);
+        form.addView(tmohLabel, matchWrap());
+
+        EditText tmohInput = numberInput(currentTmohHours() <= 0.0 ? "" : String.format(Locale.US, "%.1f", currentTmohHours()));
+        form.addView(tmohInput, matchWrap());
+
+        TextView issueLabel = text("Known engine issues", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        issueLabel.setPadding(0, dp(14), 0, 0);
+        form.addView(issueLabel, matchWrap());
+
+        Set<String> selectedIssues = selectedIssueSet(currentKnownIssueTags());
+        Map<String, CheckBox> issueInputs = new HashMap<>();
+        for (String issue : KNOWN_ISSUE_OPTIONS) {
+            CheckBox checkBox = new CheckBox(this);
+            checkBox.setText(issue);
+            checkBox.setTextSize(14);
+            checkBox.setTextColor(Color.rgb(15, 23, 42));
+            checkBox.setChecked(selectedIssues.contains(issue));
+            form.addView(checkBox, matchWrap());
+            issueInputs.put(issue, checkBox);
+        }
+
+        TextView issueNotesLabel = text("Known issue notes", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        issueNotesLabel.setPadding(0, dp(10), 0, 0);
+        form.addView(issueNotesLabel, matchWrap());
+
+        EditText issueNotesInput = multiLineInput(currentKnownIssueNotes());
+        form.addView(issueNotesInput, matchWrap());
+
         TextView durationLabel = text("Default capture time, seconds", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
         durationLabel.setPadding(0, dp(14), 0, 0);
         form.addView(durationLabel, matchWrap());
@@ -667,10 +738,13 @@ public final class MainActivity extends Activity {
                 .setView(scrollView)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> {
-                    saveSettings(durationInput, rpmInputs, engineSpinner, customEngineInput);
+                    saveSettings(durationInput, rpmInputs, engineSpinner, customEngineInput, tmohInput, issueInputs, issueNotesInput);
                     refreshPhaseButtons();
-                    refreshEngineLabel();
+                    refreshMetadataLabels();
                     activeEngineTag = currentEngineTag();
+                    activeTmohHours = currentTmohHours();
+                    activeKnownIssueTags = currentKnownIssueTags();
+                    activeKnownIssueNotes = currentKnownIssueNotes();
                     baseline = SessionLogger.loadBaseline(this, activePhase, activeEngineTag);
                     refreshBaselineLabel();
                     statusText.setText("Settings saved");
@@ -682,7 +756,10 @@ public final class MainActivity extends Activity {
             EditText durationInput,
             Map<String, EditText> rpmInputs,
             Spinner engineSpinner,
-            EditText customEngineInput
+            EditText customEngineInput,
+            EditText tmohInput,
+            Map<String, CheckBox> issueInputs,
+            EditText issueNotesInput
     ) {
         SharedPreferences.Editor editor = prefs().edit();
         int seconds = clamp(parseInt(durationInput.getText().toString(), DEFAULT_CAPTURE_SECONDS), MIN_CAPTURE_SECONDS, MAX_CAPTURE_SECONDS);
@@ -695,6 +772,10 @@ public final class MainActivity extends Activity {
         }
         editor.putString(KEY_ENGINE_OPTION, engineOption);
         editor.putString(KEY_CUSTOM_ENGINE, cleanCustomEngineName(customEngineInput.getText().toString()));
+        double tmohHours = parseDouble(tmohInput.getText().toString(), 0.0);
+        editor.putFloat(KEY_TMOH_HOURS, (float) Math.max(0.0, Math.min(100000.0, tmohHours)));
+        editor.putString(KEY_KNOWN_ISSUE_TAGS, knownIssueTagsForSave(issueInputs));
+        editor.putString(KEY_KNOWN_ISSUE_NOTES, cleanOptionalText(issueNotesInput.getText().toString()));
 
         for (String phase : PHASES) {
             EditText input = rpmInputs.get(phase);
@@ -731,9 +812,15 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void refreshEngineLabel() {
+    private void refreshMetadataLabels() {
         if (engineText != null) {
             engineText.setText("Engine   " + currentEngineTag());
+        }
+        if (tmohText != null) {
+            tmohText.setText("TMOH   " + tmohLabel(currentTmohHours()));
+        }
+        if (issueText != null) {
+            issueText.setText("Issues   " + currentKnownIssueTags());
         }
     }
 
@@ -787,6 +874,78 @@ public final class MainActivity extends Activity {
         return customName.isEmpty() || "Unknown".equals(customName) ? CUSTOM_ENGINE_OPTION : customName;
     }
 
+    private double currentTmohHours() {
+        return prefs().getFloat(KEY_TMOH_HOURS, 0.0f);
+    }
+
+    private String tmohLabel(double hours) {
+        if (hours <= 0.0) {
+            return "not set";
+        }
+        return String.format(Locale.US, "%.1f hr", hours);
+    }
+
+    private String currentKnownIssueTags() {
+        String tags = prefs().getString(KEY_KNOWN_ISSUE_TAGS, NO_KNOWN_ISSUES);
+        tags = SpectrumFeatures.sanitizeCsv(tags);
+        return tags.isEmpty() || "Unknown".equals(tags) ? NO_KNOWN_ISSUES : tags;
+    }
+
+    private String currentKnownIssueNotes() {
+        return cleanOptionalText(prefs().getString(KEY_KNOWN_ISSUE_NOTES, ""));
+    }
+
+    private Set<String> selectedIssueSet(String tags) {
+        Set<String> selected = new HashSet<>();
+        if (tags == null || tags.trim().isEmpty()) {
+            selected.add(NO_KNOWN_ISSUES);
+            return selected;
+        }
+
+        String[] parts = tags.split(";");
+        for (String part : parts) {
+            String clean = cleanOptionalText(part);
+            if (!clean.isEmpty()) {
+                selected.add(clean);
+            }
+        }
+
+        if (selected.isEmpty()) {
+            selected.add(NO_KNOWN_ISSUES);
+        }
+        return selected;
+    }
+
+    private String knownIssueTagsForSave(Map<String, CheckBox> issueInputs) {
+        StringBuilder selected = new StringBuilder();
+        boolean hasSpecificIssue = false;
+
+        for (String issue : KNOWN_ISSUE_OPTIONS) {
+            if (NO_KNOWN_ISSUES.equals(issue)) {
+                continue;
+            }
+            CheckBox checkBox = issueInputs.get(issue);
+            if (checkBox != null && checkBox.isChecked()) {
+                if (selected.length() > 0) {
+                    selected.append("; ");
+                }
+                selected.append(issue);
+                hasSpecificIssue = true;
+            }
+        }
+
+        if (hasSpecificIssue) {
+            return selected.toString();
+        }
+
+        CheckBox noneKnown = issueInputs.get(NO_KNOWN_ISSUES);
+        if (noneKnown == null || noneKnown.isChecked()) {
+            return NO_KNOWN_ISSUES;
+        }
+
+        return NO_KNOWN_ISSUES;
+    }
+
     private int engineOptionIndex(String engineOption) {
         for (int i = 0; i < ENGINE_OPTIONS.length; i++) {
             if (ENGINE_OPTIONS[i].equals(engineOption)) {
@@ -812,6 +971,10 @@ public final class MainActivity extends Activity {
         return SpectrumFeatures.sanitizeCsv(value);
     }
 
+    private String cleanOptionalText(String value) {
+        return SpectrumFeatures.sanitizeOptionalCsv(value);
+    }
+
     private EditText numberInput(String value) {
         EditText editText = new EditText(this);
         editText.setSingleLine(true);
@@ -825,6 +988,16 @@ public final class MainActivity extends Activity {
         editText.setSingleLine(true);
         editText.setText(value);
         editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        return editText;
+    }
+
+    private EditText multiLineInput(String value) {
+        EditText editText = new EditText(this);
+        editText.setSingleLine(false);
+        editText.setMinLines(2);
+        editText.setGravity(Gravity.TOP);
+        editText.setText(value);
+        editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         return editText;
     }
 
