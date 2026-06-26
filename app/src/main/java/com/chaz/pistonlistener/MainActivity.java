@@ -42,7 +42,6 @@ public final class MainActivity extends Activity {
     private static final String KEY_KNOWN_ISSUE_NOTES = "known_issue_notes";
     private static final String KEY_CLOUDFLARE_ENABLED = "cloudflare_enabled";
     private static final String KEY_CLOUDFLARE_URL = "cloudflare_url";
-    private static final String KEY_CLOUDFLARE_TOKEN = "cloudflare_token";
     private static final String KEY_DEVICE_LABEL = "device_label";
     private static final int DEFAULT_CAPTURE_SECONDS = 30;
     private static final String DEFAULT_CLOUDFLARE_URL = "https://piston-listener-api.piston-listener.workers.dev";
@@ -108,7 +107,7 @@ public final class MainActivity extends Activity {
                     + "2. Configure Targets\n"
                     + "Open Settings, choose the engine, enter TMOH hours, tag any known engine issues, set the default capture time, and enter target RPM for each phase. Leave RPM blank or 0 if you do not know it yet.\n\n"
                     + "Optional Cloudflare Sync\n"
-                    + "The Worker API URL and auto upload are set by default. Enter the private upload token in Settings before relying on sync. Accepted captures are queued locally first and uploaded when the phone has a network connection.\n\n"
+                    + "The Worker API URL and auto upload are set by default. Accepted captures are queued locally first and uploaded when the phone has a network connection. No upload credential is needed on the phone.\n\n"
                     + "3. Run Preflight\n"
                     + "Tap Preflight before collecting trend data. The app checks quiet cabin, idle, and run-up levels and reports Good, Too quiet, Clipping, or Compression suspected.\n\n"
                     + "4. Place the Phone Consistently\n"
@@ -847,13 +846,6 @@ public final class MainActivity extends Activity {
         EditText cloudflareUrlInput = urlInput(currentCloudflareUrl());
         form.addView(cloudflareUrlInput, matchWrap());
 
-        TextView cloudflareTokenLabel = text("Upload token", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
-        cloudflareTokenLabel.setPadding(0, dp(10), 0, 0);
-        form.addView(cloudflareTokenLabel, matchWrap());
-
-        EditText cloudflareTokenInput = passwordInput(currentCloudflareToken());
-        form.addView(cloudflareTokenInput, matchWrap());
-
         ScrollView scrollView = new ScrollView(this);
         scrollView.addView(form);
 
@@ -872,7 +864,6 @@ public final class MainActivity extends Activity {
                             issueNotesInput,
                             cloudflareEnabledInput,
                             cloudflareUrlInput,
-                            cloudflareTokenInput,
                             deviceLabelInput
                     );
                     refreshPhaseButtons();
@@ -902,7 +893,6 @@ public final class MainActivity extends Activity {
             EditText issueNotesInput,
             CheckBox cloudflareEnabledInput,
             EditText cloudflareUrlInput,
-            EditText cloudflareTokenInput,
             EditText deviceLabelInput
     ) {
         SharedPreferences.Editor editor = prefs().edit();
@@ -922,7 +912,6 @@ public final class MainActivity extends Activity {
         editor.putString(KEY_KNOWN_ISSUE_NOTES, cleanOptionalText(issueNotesInput.getText().toString()));
         editor.putBoolean(KEY_CLOUDFLARE_ENABLED, cloudflareEnabledInput.isChecked());
         editor.putString(KEY_CLOUDFLARE_URL, cleanUrl(cloudflareUrlInput.getText().toString()));
-        editor.putString(KEY_CLOUDFLARE_TOKEN, cloudflareTokenInput.getText().toString().trim());
         editor.putString(KEY_DEVICE_LABEL, cleanOptionalText(deviceLabelInput.getText().toString()));
 
         for (String phase : PHASES) {
@@ -989,7 +978,7 @@ public final class MainActivity extends Activity {
         if (!uploadEnabled()) {
             syncText.setText(String.format(Locale.US, "Sync   off, %d queued", pending));
         } else if (!cloudflareConfig().isReady()) {
-            syncText.setText(String.format(Locale.US, "Sync   needs URL/token, %d queued", pending));
+            syncText.setText(String.format(Locale.US, "Sync   needs URL, %d queued", pending));
         } else {
             syncText.setText(String.format(Locale.US, "Sync   ready, %d queued", pending));
         }
@@ -1016,7 +1005,7 @@ public final class MainActivity extends Activity {
 
         CloudflareUploader.Config config = cloudflareConfig();
         if (!config.isReady()) {
-            statusText.setText("Cloudflare needs URL/token");
+            statusText.setText("Cloudflare needs URL");
             return;
         }
 
@@ -1031,7 +1020,7 @@ public final class MainActivity extends Activity {
     }
 
     private CloudflareUploader.Config cloudflareConfig() {
-        return new CloudflareUploader.Config(currentCloudflareUrl(), currentCloudflareToken());
+        return new CloudflareUploader.Config(currentCloudflareUrl(), "");
     }
 
     private int getCaptureSeconds() {
@@ -1086,11 +1075,6 @@ public final class MainActivity extends Activity {
 
     private String currentCloudflareUrl() {
         return cleanUrl(prefs().getString(KEY_CLOUDFLARE_URL, DEFAULT_CLOUDFLARE_URL));
-    }
-
-    private String currentCloudflareToken() {
-        String token = prefs().getString(KEY_CLOUDFLARE_TOKEN, "");
-        return token == null ? "" : token.trim();
     }
 
     private String currentDeviceLabel() {
@@ -1222,14 +1206,6 @@ public final class MainActivity extends Activity {
         editText.setSingleLine(true);
         editText.setText(value);
         editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        return editText;
-    }
-
-    private EditText passwordInput(String value) {
-        EditText editText = new EditText(this);
-        editText.setSingleLine(true);
-        editText.setText(value);
-        editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         return editText;
     }
 

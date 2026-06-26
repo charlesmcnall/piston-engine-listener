@@ -119,7 +119,9 @@ public final class CloudflareUploader {
         connection.setRequestMethod(method);
         connection.setConnectTimeout(CONNECT_TIMEOUT_MILLIS);
         connection.setReadTimeout(READ_TIMEOUT_MILLIS);
-        connection.setRequestProperty("Authorization", "Bearer " + token);
+        if (token != null && !token.trim().isEmpty()) {
+            connection.setRequestProperty("Authorization", "Bearer " + token.trim());
+        }
         connection.setRequestProperty("Content-Type", contentType);
         connection.setRequestProperty("Accept", "application/json");
         return connection;
@@ -189,7 +191,7 @@ public final class CloudflareUploader {
         }
 
         public boolean isReady() {
-            return url.startsWith("https://") && uploadToken.length() >= 12;
+            return url.startsWith("https://");
         }
 
         private static String normalizeUrl(String value) {

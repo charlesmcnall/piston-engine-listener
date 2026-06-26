@@ -11,6 +11,12 @@ type QueryValue = string | number;
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
 };
+const MAX_METADATA_BYTES = 128 * 1024;
+const MAX_AUDIO_BYTES = 40 * 1024 * 1024;
+const MAX_FEATURE_BYTES = 5 * 1024 * 1024;
+const PUBLIC_UPLOAD_WINDOW_SECONDS = 60 * 60;
+const PUBLIC_UPLOAD_MAX_REQUESTS_PER_WINDOW = 240;
+const VALID_PHASES = new Set(["Idle", "Run-up", "Climb", "Cruise", "Descent"]);
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -24,13 +30,27 @@ export default {
       return json({ ok: true, service: "piston-listener-api" }, env);
     }
 
+    if (url.pathname === "/v1/captures" && request.method === "POST") {
+      const guard = await publicUploadGuard(request, env, "metadata");
+      if (guard) {
+        return guard;
+      }
+      return createCapture(request, env, true);
+    }
+
+    const fileMatch = url.pathname.match(/^\/v1\/captures\/([^/]+)\/(audio|features)$/);
+    if (fileMatch && request.method === "PUT") {
+      const kind = fileMatch[2] as "audio" | "features";
+      const guard = await publicUploadGuard(request, env, kind);
+      if (guard) {
+        return guard;
+      }
+      return uploadCaptureFile(request, env, decodeURIComponent(fileMatch[1]), kind, true);
+    }
+
     const authFailure = authorize(request, env);
     if (authFailure) {
       return authFailure;
-    }
-
-    if (url.pathname === "/v1/captures" && request.method === "POST") {
-      return createCapture(request, env);
     }
 
     if (url.pathname === "/v1/captures" && request.method === "GET") {
@@ -39,11 +59,6 @@ export default {
 
     if (url.pathname === "/v1/stats" && request.method === "GET") {
       return getStats(url, env);
-    }
-
-    const fileMatch = url.pathname.match(/^\/v1\/captures\/([^/]+)\/(audio|features)$/);
-    if (fileMatch && request.method === "PUT") {
-      return uploadCaptureFile(request, env, decodeURIComponent(fileMatch[1]), fileMatch[2] as "audio" | "features");
     }
 
     if (fileMatch && request.method === "GET") {
@@ -63,7 +78,7 @@ export default {
   },
 };
 
-async function createCapture(request: Request, env: Env): Promise<Response> {
+async function createCapture(request: Request, env: Env, publicUpload = false): Promise<Response> {
   let payload: CapturePayload;
   try {
     payload = (await request.json()) as CapturePayload;
@@ -74,6 +89,12 @@ async function createCapture(request: Request, env: Env): Promise<Response> {
   const captureId = stringField(payload, "captureId");
   if (!validCaptureId(captureId)) {
     return json({ error: "invalid captureId" }, env, 400);
+  }
+  if (publicUpload) {
+    const validationError = validatePublicCapturePayload(payload);
+    if (validationError) {
+      return json({ error: validationError }, env, 400);
+    }
   }
 
   const now = new Date().toISOString();
@@ -159,9 +180,16 @@ async function uploadCaptureFile(
   env: Env,
   captureId: string,
   kind: "audio" | "features",
+  publicUpload = false,
 ): Promise<Response> {
   if (!validCaptureId(captureId)) {
     return json({ error: "invalid captureId" }, env, 400);
+  }
+  if (publicUpload) {
+    const existing = await env.DB.prepare("SELECT capture_id FROM captures WHERE capture_id = ?").bind(captureId).first();
+    if (!existing) {
+      return json({ error: "capture metadata must be created before file upload" }, env, 404);
+    }
   }
 
   const body = await request.arrayBuffer();
@@ -192,6 +220,99 @@ async function uploadCaptureFile(
   }
 
   return json({ ok: true, captureId, kind, key, bytes: body.byteLength }, env);
+}
+
+async function publicUploadGuard(
+  request: Request,
+  env: Env,
+  kind: "metadata" | "audio" | "features",
+): Promise<Response | null> {
+  if (!["POST", "PUT"].includes(request.method)) {
+    return json({ error: "method not allowed" }, env, 405);
+  }
+
+  const maxBytes = kind === "audio" ? MAX_AUDIO_BYTES : kind === "features" ? MAX_FEATURE_BYTES : MAX_METADATA_BYTES;
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (!Number.isFinite(contentLength) || contentLength <= 0) {
+    return json({ error: "missing content length" }, env, 411);
+  }
+  if (contentLength > maxBytes) {
+    return json({ error: `${kind} upload too large` }, env, 413);
+  }
+
+  const contentType = (request.headers.get("content-type") || "").toLowerCase();
+  if (kind === "metadata" && !contentType.includes("application/json")) {
+    return json({ error: "metadata must be JSON" }, env, 415);
+  }
+  if (kind === "audio" && !contentType.includes("audio/") && !contentType.includes("octet-stream")) {
+    return json({ error: "audio upload must be audio content" }, env, 415);
+  }
+  if (kind === "features" && !contentType.includes("text/") && !contentType.includes("csv") && !contentType.includes("octet-stream")) {
+    return json({ error: "features upload must be CSV/text content" }, env, 415);
+  }
+
+  return enforcePublicUploadRateLimit(request, env);
+}
+
+async function enforcePublicUploadRateLimit(request: Request, env: Env): Promise<Response | null> {
+  const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown";
+  const nowMillis = Date.now();
+  const bucket = Math.floor(nowMillis / (PUBLIC_UPLOAD_WINDOW_SECONDS * 1000));
+  const reset = new Date((bucket + 1) * PUBLIC_UPLOAD_WINDOW_SECONDS * 1000).toISOString();
+  const bucketKey = `public-upload:${ip.slice(0, 80)}:${bucket}`;
+
+  await env.DB.prepare(
+    `INSERT INTO upload_rate_limits (bucket_key, request_count, reset_at)
+     VALUES (?, 1, ?)
+     ON CONFLICT(bucket_key) DO UPDATE SET request_count = request_count + 1`
+  ).bind(bucketKey, reset).run();
+
+  const row = await env.DB.prepare(
+    "SELECT request_count FROM upload_rate_limits WHERE bucket_key = ?"
+  ).bind(bucketKey).first<{ request_count: number }>();
+
+  if ((row?.request_count || 0) > PUBLIC_UPLOAD_MAX_REQUESTS_PER_WINDOW) {
+    return json({ error: "public upload rate limit exceeded" }, env, 429);
+  }
+
+  if (Math.random() < 0.01) {
+    await env.DB.prepare("DELETE FROM upload_rate_limits WHERE reset_at < ?")
+      .bind(new Date(nowMillis - PUBLIC_UPLOAD_WINDOW_SECONDS * 1000).toISOString())
+      .run();
+  }
+  return null;
+}
+
+function validatePublicCapturePayload(payload: CapturePayload): string {
+  if (!stringField(payload, "deviceLabel")) {
+    return "deviceLabel is required";
+  }
+  if (!stringField(payload, "appVersion")) {
+    return "appVersion is required";
+  }
+  if (!stringField(payload, "engine")) {
+    return "engine is required";
+  }
+  const phase = stringField(payload, "phase");
+  if (!VALID_PHASES.has(phase)) {
+    return "invalid phase";
+  }
+  const durationMillis = integerField(payload, "durationMillis");
+  if (durationMillis < 5000 || durationMillis > 300000) {
+    return "durationMillis out of range";
+  }
+  const frameCount = integerField(payload, "frameCount");
+  if (frameCount < 1 || frameCount > 10000) {
+    return "frameCount out of range";
+  }
+  const sampleRate = integerField(payload, "sampleRate") || 48000;
+  if (sampleRate < 8000 || sampleRate > 192000) {
+    return "sampleRate out of range";
+  }
+  if (!booleanField(payload, "acceptedForTrend")) {
+    return "only accepted captures may upload anonymously";
+  }
+  return "";
 }
 
 async function listCaptures(url: URL, env: Env): Promise<Response> {

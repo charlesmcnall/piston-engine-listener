@@ -67,7 +67,7 @@ Enable USB debugging on the phone, connect it, then run:
 3. Tag any known engine issues, or leave **None known** selected.
 4. Set the default capture duration. The default is 30 seconds.
 5. Set target RPMs for each phase you plan to capture. Leave RPM blank or 0 if unknown.
-6. Confirm Cloudflare sync is enabled and the Worker URL is prefilled, then enter the private upload token if you want automatic uploads.
+6. Confirm Cloudflare sync is enabled and the Worker URL is prefilled. Accepted captures upload automatically; no phone-side upload token is required.
 7. Tap **Preflight** and run the quiet cabin, idle, and run-up checks before collecting trend data.
 8. Put the phone in the same cabin location every time, with the mic unobstructed.
 9. Tap a phase button once. The app records for the configured duration, stops automatically, and saves.
@@ -97,7 +97,7 @@ Cloudflare setup files live in `cloudflare/`, with setup notes in `docs/cloudfla
 
 The dashboard lives in `web/` and can be opened directly from `web\index.html` or deployed to Cloudflare Pages. Setup notes are in `docs/cloudflare-dashboard-setup.md`.
 
-The dashboard uses the same private Worker token as the Android app. It does not store secrets in git.
+The Android app uploads accepted captures anonymously through a size-limited and rate-limited public Worker path. The dashboard still requires the private Worker token for browsing, review, and downloads. It does not store secrets in git.
 
 The live dashboard includes a **Latest APK** link that points to the newest GitHub Release asset.
 

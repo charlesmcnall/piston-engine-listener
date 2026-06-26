@@ -6,7 +6,7 @@ This setup uses:
 - Cloudflare D1 for capture metadata.
 - Cloudflare R2 for WAV and CSV sample files.
 
-The Android APK does not contain Cloudflare admin credentials. It only stores the Worker URL and an upload token that you enter in app settings.
+The Android APK does not contain Cloudflare admin credentials. It stores the Worker URL and uploads accepted captures through the public, rate-limited app upload path. Dashboard browsing, review, and downloads still require the private Worker token.
 
 ## One-time Cloudflare setup
 
@@ -93,11 +93,12 @@ https://piston-listener-api.piston-listener.workers.dev
 1. Open **Settings** in Piston Listener.
 2. Confirm **Auto upload accepted captures** is enabled.
 3. Confirm the Worker API URL is prefilled as `https://piston-listener-api.piston-listener.workers.dev`.
-4. Enter the same private upload token you saved with `npm run secret:upload-token`.
-5. Set a device label, such as `Pixel 8 left seat`.
-6. Save settings, then tap **Sync**.
+4. Set a device label, such as `Pixel 8 left seat`.
+5. Save settings, then tap **Sync**.
 
 Accepted captures are saved locally first. If the phone is offline or upload fails, the pending upload files stay on the phone and can be retried with **Sync**.
+
+Phone upload does not require a token. Keep the private `UPLOAD_TOKEN` for the dashboard and admin API calls.
 
 ## API shape
 
@@ -135,6 +136,7 @@ curl -H "Authorization: Bearer <upload-token>" https://piston-listener-api.<your
 
 - A 30 second 48 kHz mono 16-bit WAV is about 2.9 MB.
 - The app uploads only captures that pass the signal-quality gate.
+- Public phone uploads are limited by request size, metadata validation, and per-IP rate limiting.
 - The app keeps compact baseline summary rows locally, but prunes older detailed WAV/CSV files after they are uploaded or superseded by a newer local capture for the same engine and phase.
 - Rejected captures are not queued for Cloudflare upload and may be removed by local retention. Cancelled captures delete the partial WAV.
-- Keep the upload token private. Rotate it with `npm run secret:upload-token` if it leaks.
+- Keep the dashboard/admin upload token private. Rotate it with `npm run secret:upload-token` if it leaks.
