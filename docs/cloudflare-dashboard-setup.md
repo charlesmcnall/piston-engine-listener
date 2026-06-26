@@ -12,6 +12,7 @@ The dashboard is a static website in `web/`. It talks to the existing Piston Lis
 - Detail panel for each capture.
 - Review status, flagged state, and analyst notes.
 - Authenticated WAV and CSV downloads from R2.
+- A **Latest APK** link to `https://github.com/charlesmcnall/piston-engine-listener/releases/latest/download/app-debug.apk`.
 
 ## Backend migration
 

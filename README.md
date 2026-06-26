@@ -46,6 +46,12 @@ The debug APK is written to:
 app\build\outputs\apk\debug\app-debug.apk
 ```
 
+Latest published debug APK:
+
+```text
+https://github.com/charlesmcnall/piston-engine-listener/releases/latest/download/app-debug.apk
+```
+
 ## Install on a connected Android phone
 
 Enable USB debugging on the phone, connect it, then run:
@@ -92,6 +98,8 @@ Cloudflare setup files live in `cloudflare/`, with setup notes in `docs/cloudfla
 The dashboard lives in `web/` and can be opened directly from `web\index.html` or deployed to Cloudflare Pages. Setup notes are in `docs/cloudflare-dashboard-setup.md`.
 
 The dashboard uses the same private Worker token as the Android app. It does not store secrets in git.
+
+The live dashboard includes a **Latest APK** link that points to the newest GitHub Release asset.
 
 ## Next build slice
 
