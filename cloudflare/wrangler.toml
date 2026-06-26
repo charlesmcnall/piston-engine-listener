@@ -1,0 +1,17 @@
+name = "piston-listener-api"
+main = "src/index.ts"
+compatibility_date = "2026-06-25"
+workers_dev = true
+preview_urls = false
+
+[vars]
+ALLOWED_ORIGIN = "*"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "piston-listener-catalog"
+database_id = "8321a139-057a-4663-bb97-0aa442b07719"
+
+[[r2_buckets]]
+binding = "SAMPLES"
+bucket_name = "piston-listener-samples"

@@ -14,6 +14,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 public final class SessionLogger {
     private static final String SUMMARY_FILE_NAME = "summary.csv";
@@ -22,7 +23,9 @@ public final class SessionLogger {
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.systemDefault());
 
     private File sessionFile;
+    private File audioFile;
     private File summaryFile;
+    private String captureId;
     private long startedMillis;
     private String startedIso;
     private String phase;
@@ -78,9 +81,12 @@ public final class SessionLogger {
         maxClipPercent = 0.0;
         maxFlatTopPercent = 0.0;
 
+        captureId = UUID.randomUUID().toString();
         String safePhase = phase.replace(' ', '-').toLowerCase(Locale.US);
         String safeEngine = fileSegment(engine);
-        sessionFile = new File(sessionsDir, "session-" + FILE_TIME.format(Instant.ofEpochMilli(startedMillis)) + "-" + safeEngine + "-" + safePhase + ".csv");
+        String baseName = "session-" + FILE_TIME.format(Instant.ofEpochMilli(startedMillis)) + "-" + safeEngine + "-" + safePhase;
+        sessionFile = new File(sessionsDir, baseName + ".csv");
+        audioFile = new File(sessionsDir, baseName + ".wav");
         summaryFile = new File(sessionsDir, SUMMARY_FILE_NAME);
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(sessionFile, false))) {
@@ -115,15 +121,26 @@ public final class SessionLogger {
         maxFlatTopPercent = Math.max(maxFlatTopPercent, features.flatTopPercent);
     }
 
-    public synchronized void finish(SignalQualityGate.Snapshot signalQuality) throws IOException {
+    public synchronized CaptureSummary finish(SignalQualityGate.Snapshot signalQuality) throws IOException {
         if (summaryFile == null || frameCount == 0L) {
-            return;
+            return null;
         }
 
         ensureSummaryHeader();
         boolean writeHeader = !summaryFile.exists() || summaryFile.length() == 0L;
         long durationMillis = Math.max(0L, System.currentTimeMillis() - startedMillis);
         double frames = Math.max(1.0, frameCount);
+        double avgRpm = sumRpm / frames;
+        double avgRmsDbfs = sumRms / frames;
+        double avgPeakDbfs = sumPeakDbfs / frames;
+        double avgCrestFactorDb = sumCrestFactorDb / frames;
+        double avgDominantHz = sumDominantHz / frames;
+        double avgCentroidHz = sumCentroidHz / frames;
+        double avgBand20To120 = sumBand20To120 / frames;
+        double avgBand120To600 = sumBand120To600 / frames;
+        double avgBand600To2500 = sumBand600To2500 / frames;
+        double avgBand2500To6000 = sumBand2500To6000 / frames;
+        String qualityLabel = SpectrumFeatures.sanitizeCsv(signalQuality == null ? "Unknown" : signalQuality.label);
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(summaryFile, true))) {
             if (writeHeader) {
@@ -132,35 +149,78 @@ public final class SessionLogger {
             }
             writer.write(String.format(
                     Locale.US,
-                    "%s,%s,%d,%d,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.4f,%s,%s,%.1f,%s,%s",
+                    "%s,%s,%d,%d,%.1f,%.3f,%.4f,%.2f,%.2f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.4f,%s,%s,%.1f,%s,%s,%s,%s,%s",
                     startedIso,
                     phase,
                     durationMillis,
                     frameCount,
-                    sumRpm / frames,
-                    sumRms / frames,
+                    avgRpm,
+                    avgRmsDbfs,
                     maxClipPercent,
-                    sumDominantHz / frames,
-                    sumCentroidHz / frames,
-                    sumBand20To120 / frames,
-                    sumBand120To600 / frames,
-                    sumBand600To2500 / frames,
-                    sumBand2500To6000 / frames,
-                    sumPeakDbfs / frames,
-                    sumCrestFactorDb / frames,
+                    avgDominantHz,
+                    avgCentroidHz,
+                    avgBand20To120,
+                    avgBand120To600,
+                    avgBand600To2500,
+                    avgBand2500To6000,
+                    avgPeakDbfs,
+                    avgCrestFactorDb,
                     maxFlatTopPercent,
-                    SpectrumFeatures.sanitizeCsv(signalQuality == null ? "Unknown" : signalQuality.label),
+                    qualityLabel,
                     engine,
                     tmohHours,
                     knownIssueTags,
-                    knownIssueNotes
+                    knownIssueNotes,
+                    captureId,
+                    sessionFile == null ? "" : sessionFile.getName(),
+                    audioFile == null ? "" : audioFile.getName()
             ));
             writer.newLine();
         }
+
+        return new CaptureSummary(
+                captureId,
+                startedIso,
+                phase,
+                engine,
+                tmohHours,
+                knownIssueTags,
+                knownIssueNotes,
+                durationMillis,
+                frameCount,
+                avgRpm,
+                avgRmsDbfs,
+                maxClipPercent,
+                avgDominantHz,
+                avgCentroidHz,
+                avgBand20To120,
+                avgBand120To600,
+                avgBand600To2500,
+                avgBand2500To6000,
+                avgPeakDbfs,
+                avgCrestFactorDb,
+                maxFlatTopPercent,
+                qualityLabel,
+                true,
+                sessionFile,
+                audioFile
+        );
     }
 
     public String getSessionFileName() {
         return sessionFile == null ? "" : sessionFile.getName();
+    }
+
+    public File getSessionFile() {
+        return sessionFile;
+    }
+
+    public File getAudioFile() {
+        return audioFile;
+    }
+
+    public String getCaptureId() {
+        return captureId == null ? "" : captureId;
     }
 
     public static Baseline loadBaseline(Context context, String phase, String engine) {
@@ -224,13 +284,19 @@ public final class SessionLogger {
             return Baseline.empty();
         }
 
+        double[] latest = rows.get(rows.size() - 1);
         return new Baseline(
                 count,
                 centroid / count,
                 band20To120 / count,
                 band120To600 / count,
                 band600To2500 / count,
-                band2500To6000 / count
+                band2500To6000 / count,
+                latest[0],
+                latest[1],
+                latest[2],
+                latest[3],
+                latest[4]
         );
     }
 
@@ -245,7 +311,8 @@ public final class SessionLogger {
     private static String summaryHeader() {
         return "startedAt,phase,durationMillis,frameCount,avgRpm,avgRmsDbfs,maxClipPercent,"
                 + "avgDominantHz,avgCentroidHz,avgBand20_120,avgBand120_600,avgBand600_2500,avgBand2500_6000,"
-                + "avgPeakDbfs,avgCrestFactorDb,maxFlatTopPercent,signalQuality,engine,tmohHours,knownIssueTags,knownIssueNotes";
+                + "avgPeakDbfs,avgCrestFactorDb,maxFlatTopPercent,signalQuality,engine,tmohHours,knownIssueTags,knownIssueNotes,"
+                + "captureId,featuresFileName,audioFileName";
     }
 
     private void ensureSummaryHeader() throws IOException {
@@ -261,7 +328,7 @@ public final class SessionLogger {
             }
         }
 
-        if (lines.isEmpty() || lines.get(0).endsWith(",knownIssueNotes")) {
+        if (lines.isEmpty() || lines.get(0).endsWith(",audioFileName")) {
             return;
         }
 
@@ -288,6 +355,11 @@ public final class SessionLogger {
         private final double band120To600;
         private final double band600To2500;
         private final double band2500To6000;
+        private final double latestCentroidHz;
+        private final double latestBand20To120;
+        private final double latestBand120To600;
+        private final double latestBand600To2500;
+        private final double latestBand2500To6000;
 
         private Baseline(
                 int count,
@@ -295,7 +367,12 @@ public final class SessionLogger {
                 double band20To120,
                 double band120To600,
                 double band600To2500,
-                double band2500To6000
+                double band2500To6000,
+                double latestCentroidHz,
+                double latestBand20To120,
+                double latestBand120To600,
+                double latestBand600To2500,
+                double latestBand2500To6000
         ) {
             this.count = count;
             this.centroidHz = centroidHz;
@@ -303,14 +380,23 @@ public final class SessionLogger {
             this.band120To600 = band120To600;
             this.band600To2500 = band600To2500;
             this.band2500To6000 = band2500To6000;
+            this.latestCentroidHz = latestCentroidHz;
+            this.latestBand20To120 = latestBand20To120;
+            this.latestBand120To600 = latestBand120To600;
+            this.latestBand600To2500 = latestBand600To2500;
+            this.latestBand2500To6000 = latestBand2500To6000;
         }
 
         public static Baseline empty() {
-            return new Baseline(0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            return new Baseline(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
         }
 
         public boolean isReady() {
             return count >= 3;
+        }
+
+        public boolean hasPrevious() {
+            return count > 0;
         }
 
         public double score(SpectrumFeatures features) {
@@ -324,6 +410,20 @@ public final class SessionLogger {
                             + square(features.band600To2500 - band600To2500)
                             + square(features.band2500To6000 - band2500To6000);
             double centroidDistance = Math.abs(features.centroidHz - centroidHz) / Math.max(centroidHz, 1.0);
+            return Math.min(99.0, Math.sqrt(bandDistance) * 120.0 + centroidDistance * 25.0);
+        }
+
+        public double previousScore(SpectrumFeatures features) {
+            if (!hasPrevious()) {
+                return 0.0;
+            }
+
+            double bandDistance =
+                    square(features.band20To120 - latestBand20To120)
+                            + square(features.band120To600 - latestBand120To600)
+                            + square(features.band600To2500 - latestBand600To2500)
+                            + square(features.band2500To6000 - latestBand2500To6000);
+            double centroidDistance = Math.abs(features.centroidHz - latestCentroidHz) / Math.max(latestCentroidHz, 1.0);
             return Math.min(99.0, Math.sqrt(bandDistance) * 120.0 + centroidDistance * 25.0);
         }
 

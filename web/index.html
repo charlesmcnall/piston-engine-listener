@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Piston Listener Dashboard</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Piston Listener</h1>
+        <p>Engine audio catalog and trend review</p>
+      </div>
+      <div class="connection" id="connectionStatus">Not connected</div>
+    </header>
+
+    <main>
+      <section class="settings-band">
+        <div class="field api-field">
+          <label for="apiUrl">Worker API</label>
+          <input id="apiUrl" type="url" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field token-field">
+          <label for="apiToken">Dashboard token</label>
+          <input id="apiToken" type="password" autocomplete="off" spellcheck="false">
+        </div>
+        <button id="saveConnection" type="button">Connect</button>
+      </section>
+
+      <section class="filters-band">
+        <div class="field">
+          <label for="engineFilter">Engine</label>
+          <select id="engineFilter">
+            <option value="">All engines</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="phaseFilter">Phase</label>
+          <select id="phaseFilter">
+            <option value="">All phases</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="qualityFilter">Quality</label>
+          <select id="qualityFilter">
+            <option value="">All quality</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="reviewFilter">Review</label>
+          <select id="reviewFilter">
+            <option value="">All review</option>
+            <option value="needs-review">Needs review</option>
+            <option value="watch">Watch</option>
+            <option value="normal">Normal</option>
+            <option value="maintenance">Maintenance</option>
+          </select>
+        </div>
+        <div class="field search-field">
+          <label for="searchFilter">Search</label>
+          <input id="searchFilter" type="search" placeholder="engine, issue, device">
+        </div>
+        <button id="refreshButton" type="button">Refresh</button>
+      </section>
+
+      <section class="summary-grid" aria-label="Capture summary">
+        <div class="metric-tile">
+          <span>Total</span>
+          <strong id="totalCaptures">--</strong>
+        </div>
+        <div class="metric-tile">
+          <span>Accepted</span>
+          <strong id="acceptedCaptures">--</strong>
+        </div>
+        <div class="metric-tile">
+          <span>Flagged</span>
+          <strong id="flaggedCaptures">--</strong>
+        </div>
+        <div class="metric-tile">
+          <span>Average RMS</span>
+          <strong id="avgRms">--</strong>
+        </div>
+        <div class="metric-tile">
+          <span>Average Centroid</span>
+          <strong id="avgCentroid">--</strong>
+        </div>
+        <div class="metric-tile">
+          <span>Average Clip</span>
+          <strong id="avgClip">--</strong>
+        </div>
+      </section>
+
+      <section class="analysis-layout">
+        <div class="chart-area">
+          <div class="section-head">
+            <h2>Trend</h2>
+            <select id="chartMetric" aria-label="Chart metric">
+              <option value="avg_rms_dbfs">RMS dBFS</option>
+              <option value="avg_centroid_hz">Centroid Hz</option>
+              <option value="avg_dominant_hz">Dominant Hz</option>
+              <option value="max_clip_percent">Clip percent</option>
+              <option value="avg_band120_600">120-600 Hz band</option>
+              <option value="avg_band600_2500">600-2500 Hz band</option>
+            </select>
+          </div>
+          <canvas id="trendCanvas" width="960" height="320" aria-label="Trend chart"></canvas>
+        </div>
+        <div class="breakdown-area">
+          <div class="section-head">
+            <h2>Engine Phases</h2>
+          </div>
+          <div id="phaseBreakdown" class="phase-breakdown"></div>
+        </div>
+      </section>
+
+      <section class="table-section">
+        <div class="section-head">
+          <h2>Captures</h2>
+          <div id="tableCount" class="muted">No rows</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Engine</th>
+                <th>Phase</th>
+                <th>Quality</th>
+                <th>RMS</th>
+                <th>Centroid</th>
+                <th>Clip</th>
+                <th>Review</th>
+              </tr>
+            </thead>
+            <tbody id="capturesTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <aside class="detail-panel" id="detailPanel" aria-label="Capture details" aria-hidden="true">
+      <div class="detail-inner">
+        <div class="section-head">
+          <h2 id="detailTitle">Capture</h2>
+          <button id="closeDetail" type="button">Close</button>
+        </div>
+        <div id="detailMeta" class="detail-meta"></div>
+        <div class="review-form">
+          <label class="check-row">
+            <input id="flaggedInput" type="checkbox">
+            <span>Flag for review</span>
+          </label>
+          <div class="field">
+            <label for="reviewStatusInput">Review status</label>
+            <select id="reviewStatusInput">
+              <option value="">Unreviewed</option>
+              <option value="needs-review">Needs review</option>
+              <option value="watch">Watch</option>
+              <option value="normal">Normal</option>
+              <option value="maintenance">Maintenance</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="analystNotesInput">Notes</label>
+            <textarea id="analystNotesInput" rows="6" placeholder="Inspection notes, suspected changes, maintenance follow-up"></textarea>
+          </div>
+          <div class="button-row">
+            <button id="saveReview" type="button">Save Review</button>
+            <button id="downloadAudio" type="button">Download WAV</button>
+            <button id="downloadFeatures" type="button">Download CSV</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

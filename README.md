@@ -17,7 +17,12 @@ Android prototype for piston-aircraft audio trend logging.
 - Signal-quality gate for peak level, clipping, crest factor, flat-top detection, and compression suspicion.
 - Preflight checks for quiet cabin, idle, and run-up signal quality.
 - Per-phase CSV session logs and summaries.
+- WAV audio saved alongside completed captures for reprocessing and review.
 - Simple baseline score after three prior sessions for the same engine and phase.
+- Previous-capture comparison for the same engine and phase.
+- Automatic local pruning that keeps compact baseline history, the latest detailed capture per engine/phase, and pending uploads.
+- Optional Cloudflare upload queue for accepted captures.
+- Static Cloudflare dashboard for browsing, filtering, charting, reviewing, and downloading uploaded captures.
 
 This is advisory data collection software. It is not an approved engine monitor, maintenance release tool, or flight safety system.
 
@@ -56,31 +61,43 @@ Enable USB debugging on the phone, connect it, then run:
 3. Tag any known engine issues, or leave **None known** selected.
 4. Set the default capture duration. The default is 30 seconds.
 5. Set target RPMs for each phase you plan to capture. Leave RPM blank or 0 if unknown.
-6. Tap **Preflight** and run the quiet cabin, idle, and run-up checks before collecting trend data.
-7. Put the phone in the same cabin location every time, with the mic unobstructed.
-8. Tap a phase button once. The app records for the configured duration, stops automatically, and saves.
-9. Use **Cancel Capture** only when the wrong phase or a bad setup was captured.
-10. Re-record if the signal gate reports clipping, too quiet, or compression suspected.
-11. Capture at least three good sessions for an engine and phase before treating the trend score as meaningful.
+6. Confirm Cloudflare sync is enabled and the Worker URL is prefilled, then enter the private upload token if you want automatic uploads.
+7. Tap **Preflight** and run the quiet cabin, idle, and run-up checks before collecting trend data.
+8. Put the phone in the same cabin location every time, with the mic unobstructed.
+9. Tap a phase button once. The app records for the configured duration, stops automatically, and saves.
+10. Use **Cancel Capture** only when the wrong phase or a bad setup was captured.
+11. Re-record if the signal gate reports clipping, too quiet, or compression suspected.
+12. Capture at least three good sessions for an engine and phase before treating the trend score as meaningful.
 
 ## Logged data
 
 On-device data is written under the app-private `files/sessions` directory:
 
 - `session-*.csv`: frame-level FFT features.
+- `session-*.wav`: raw 48 kHz mono 16-bit PCM audio in WAV format.
 - `summary.csv`: one row per completed recording.
 
 The app compares each phase against previous summaries for the same engine and phase. The baseline is considered ready after three accepted sessions. The `engine` column stores the selected engine tag, `tmohHours` stores time since major overhaul, `knownIssueTags` and `knownIssueNotes` store condition tags, and the `rpm` column stores the configured target RPM for that phase. Captures with failed signal quality are not added to the baseline summary.
+
+To control phone storage, `summary.csv` is kept as the compact baseline history, while large per-capture WAV/CSV detail files are pruned. The phone keeps the latest accepted detailed capture for each engine and phase, plus any files still waiting for Cloudflare upload. Older detailed files are removed after they are no longer needed locally.
 
 ## Online catalog
 
 Supabase setup files live in `supabase/`, with setup notes in `docs/supabase-setup.md`. The intended online model is a private `engine-samples` storage bucket for WAV/CSV files plus Postgres catalog rows in `public.captures`.
 
+Cloudflare setup files live in `cloudflare/`, with setup notes in `docs/cloudflare-setup.md`. The Cloudflare path uses a Worker upload API, D1 metadata rows, and R2 objects for WAV/CSV files.
+
+## Web dashboard
+
+The dashboard lives in `web/` and can be opened directly from `web\index.html` or deployed to Cloudflare Pages. Setup notes are in `docs/cloudflare-dashboard-setup.md`.
+
+The dashboard uses the same private Worker token as the Android app. It does not store secrets in git.
+
 ## Next build slice
 
 - Export/share CSV files from the phone.
-- Add WAV snippet capture for forensic review.
-- Add automatic Supabase upload for accepted captures.
+- Add account/user separation for shared Cloudflare datasets.
+- Add automatic Supabase upload for accepted captures, if Supabase remains a target.
 - Add phase-specific RPM normalization.
 - Add a foreground recording service.
 - Add a calibration screen for quiet cabin, idle, and run-up reference captures.

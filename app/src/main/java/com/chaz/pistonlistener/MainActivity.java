@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -39,7 +40,12 @@ public final class MainActivity extends Activity {
     private static final String KEY_TMOH_HOURS = "tmoh_hours";
     private static final String KEY_KNOWN_ISSUE_TAGS = "known_issue_tags";
     private static final String KEY_KNOWN_ISSUE_NOTES = "known_issue_notes";
+    private static final String KEY_CLOUDFLARE_ENABLED = "cloudflare_enabled";
+    private static final String KEY_CLOUDFLARE_URL = "cloudflare_url";
+    private static final String KEY_CLOUDFLARE_TOKEN = "cloudflare_token";
+    private static final String KEY_DEVICE_LABEL = "device_label";
     private static final int DEFAULT_CAPTURE_SECONDS = 30;
+    private static final String DEFAULT_CLOUDFLARE_URL = "https://piston-listener-api.piston-listener.workers.dev";
     private static final int MIN_CAPTURE_SECONDS = 5;
     private static final int MAX_CAPTURE_SECONDS = 300;
     private static final int PREFLIGHT_CAPTURE_SECONDS = 8;
@@ -101,6 +107,8 @@ public final class MainActivity extends Activity {
                     + "Download the APK from the GitHub release, open it on the Android phone, allow install unknown apps if prompted, then launch Piston Listener. Grant microphone permission.\n\n"
                     + "2. Configure Targets\n"
                     + "Open Settings, choose the engine, enter TMOH hours, tag any known engine issues, set the default capture time, and enter target RPM for each phase. Leave RPM blank or 0 if you do not know it yet.\n\n"
+                    + "Optional Cloudflare Sync\n"
+                    + "The Worker API URL and auto upload are set by default. Enter the private upload token in Settings before relying on sync. Accepted captures are queued locally first and uploaded when the phone has a network connection.\n\n"
                     + "3. Run Preflight\n"
                     + "Tap Preflight before collecting trend data. The app checks quiet cabin, idle, and run-up levels and reports Good, Too quiet, Clipping, or Compression suspected.\n\n"
                     + "4. Place the Phone Consistently\n"
@@ -123,7 +131,10 @@ public final class MainActivity extends Activity {
                     + "Centroid: center of spectral energy.\n"
                     + "Bands: energy split across frequency ranges.\n"
                     + "Baseline: how many prior sessions exist for the active phase.\n"
-                    + "Trend: rough change score versus previous recordings for that phase.\n\n"
+                    + "Trend: rough change score versus previous recordings for that phase.\n"
+                    + "Previous: rough change score versus the last accepted capture for the same engine and phase.\n\n"
+                    + "Local Storage\n"
+                    + "The app keeps compact baseline history and the latest detailed capture for each engine and phase. Older WAV/CSV detail files are pruned after upload or when a newer local comparison file replaces them.\n\n"
                     + "9. Interpret Carefully\n"
                     + "A high trend score means this sounds different than the baseline, not that the engine is failing. Use it as a prompt to inspect, compare with engine monitor data, or ask a mechanic.\n\n"
                     + "10. Safety\n"
@@ -150,9 +161,14 @@ public final class MainActivity extends Activity {
     private TextView centroidText;
     private TextView bandsText;
     private TextView trendText;
+    private TextView previousText;
     private TextView baselineText;
+    private TextView syncText;
 
     private SessionLogger logger;
+    private volatile WavFileWriter wavWriter;
+    private volatile boolean audioWriteFailed = false;
+    private volatile String audioWriteError = "";
     private SessionLogger.Baseline baseline = SessionLogger.Baseline.empty();
     private String activePhase = "Idle";
     private String activeEngineTag = DEFAULT_ENGINE;
@@ -181,6 +197,9 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         buildUi();
         updatePermissionState();
+        if (uploadEnabled()) {
+            startCloudflareSync();
+        }
     }
 
     @Override
@@ -244,6 +263,13 @@ public final class MainActivity extends Activity {
         preflightParams.setMargins(dp(10), 0, 0, 0);
         utilityRow.addView(preflightButton, preflightParams);
 
+        Button syncButton = new Button(this);
+        syncButton.setText("Sync");
+        syncButton.setOnClickListener(view -> startCloudflareSync());
+        LinearLayout.LayoutParams syncParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        syncParams.setMargins(dp(10), 0, 0, 0);
+        utilityRow.addView(syncButton, syncParams);
+
         captureText = text("Tap a phase to start a timed capture.", 15, Color.rgb(15, 23, 42), Typeface.BOLD);
         captureText.setPadding(0, 0, 0, dp(10));
         content.addView(captureText, matchWrap());
@@ -295,7 +321,9 @@ public final class MainActivity extends Activity {
         centroidText = metric("Centroid", "--");
         bandsText = metric("Bands", "--");
         trendText = metric("Trend", "--");
+        previousText = metric("Previous", "--");
         baselineText = metric("Baseline", "--");
+        syncText = metric("Sync", "--");
 
         metrics.addView(engineText, matchWrap());
         metrics.addView(tmohText, matchWrap());
@@ -308,7 +336,9 @@ public final class MainActivity extends Activity {
         metrics.addView(centroidText, matchWrap());
         metrics.addView(bandsText, matchWrap());
         metrics.addView(trendText, matchWrap());
+        metrics.addView(previousText, matchWrap());
         metrics.addView(baselineText, matchWrap());
+        metrics.addView(syncText, matchWrap());
 
         statusText = text("Ready", 14, Color.rgb(51, 65, 85), Typeface.NORMAL);
         statusText.setPadding(0, dp(12), 0, 0);
@@ -318,6 +348,7 @@ public final class MainActivity extends Activity {
         refreshPhaseButtons();
         refreshMetadataLabels();
         refreshBaselineLabel();
+        refreshSyncLabel();
     }
 
     private void addPhaseButton(LinearLayout row, String phase, boolean withLeftMargin) {
@@ -376,16 +407,27 @@ public final class MainActivity extends Activity {
         activeCaptureSeconds = durationSeconds;
         baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase, activeEngineTag);
         logger = calibrationCapture ? null : new SessionLogger();
+        wavWriter = null;
+        audioWriteFailed = false;
+        audioWriteError = "";
         qualityGate.reset();
         captureCompleting = false;
         sourceStatus = "";
 
         if (logger != null) {
+            WavFileWriter writer = null;
             try {
                 logger.start(this, activePhase, activeEngineTag, activeTmohHours, activeKnownIssueTags, activeKnownIssueNotes);
+                writer = new WavFileWriter(logger.getAudioFile());
+                writer.start();
+                wavWriter = writer;
             } catch (IOException exception) {
                 statusText.setText("Log start failed: " + exception.getMessage());
                 logger = null;
+                if (writer != null) {
+                    writer.abort();
+                }
+                wavWriter = null;
                 return;
             }
         }
@@ -399,6 +441,21 @@ public final class MainActivity extends Activity {
         captureEndsAtMillis = System.currentTimeMillis() + activeCaptureSeconds * 1000L;
 
         recorder.start(new EngineAudioRecorder.Listener() {
+            @Override
+            public void onPcm(short[] samples, int sampleCount) {
+                WavFileWriter writer = wavWriter;
+                if (writer == null) {
+                    return;
+                }
+                try {
+                    writer.append(samples, sampleCount);
+                } catch (IOException exception) {
+                    audioWriteFailed = true;
+                    audioWriteError = exception.getMessage();
+                    handler.post(() -> statusText.setText("Audio write failed: " + exception.getMessage()));
+                }
+            }
+
             @Override
             public void onFeatures(SpectrumFeatures rawFeatures) {
                 double trend = baseline.score(rawFeatures);
@@ -449,16 +506,35 @@ public final class MainActivity extends Activity {
         boolean hadCapture = recorder.isRunning() || logger != null;
         recorder.stop();
 
+        WavFileWriter finishedWriter = wavWriter;
+        wavWriter = null;
+        boolean audioFailed = audioWriteFailed;
+        String audioError = audioWriteError;
+        if (finishedWriter != null) {
+            if (completed) {
+                try {
+                    finishedWriter.finish();
+                } catch (IOException exception) {
+                    audioFailed = true;
+                    audioError = exception.getMessage();
+                }
+            } else {
+                finishedWriter.abort();
+            }
+        }
+
         SignalQualityGate.Snapshot signalQuality = qualityGate.snapshot();
         String sessionName = "";
         boolean rejected = false;
         boolean summaryFailed = false;
         String summaryError = "";
+        CaptureSummary completedSummary = null;
+        boolean uploadQueued = false;
         if (logger != null && completed) {
             sessionName = logger.getSessionFileName();
             if (signalQuality.acceptableForTrend) {
                 try {
-                    logger.finish(signalQuality);
+                    completedSummary = logger.finish(signalQuality);
                 } catch (IOException exception) {
                     summaryFailed = true;
                     summaryError = exception.getMessage();
@@ -468,6 +544,11 @@ public final class MainActivity extends Activity {
             }
         }
         logger = null;
+        if (completedSummary != null && !summaryFailed && !audioFailed) {
+            uploadQueued = queueCaptureForUpload(completedSummary);
+        }
+        CaptureRetention.Result retention = CaptureRetention.prune(this);
+        String retentionNote = retention.label();
         baseline = calibrationCapture ? SessionLogger.Baseline.empty() : SessionLogger.loadBaseline(this, activePhase, activeEngineTag);
 
         if (calibrationCapture && completed) {
@@ -505,12 +586,18 @@ public final class MainActivity extends Activity {
         }
 
         if (statusText != null && hadCapture) {
-            if (completed && summaryFailed) {
+            if (completed && audioFailed) {
+                statusText.setText("Audio write failed: " + audioError);
+            } else if (completed && summaryFailed) {
                 statusText.setText("Summary write failed: " + summaryError);
             } else if (completed && rejected) {
                 statusText.setText("Rejected " + sessionName + " - " + signalQuality.label);
             } else if (completed && !sessionName.isEmpty()) {
-                statusText.setText("Saved " + sessionName);
+                String status = uploadQueued ? "Saved and queued " + sessionName : "Saved locally " + sessionName;
+                if (!retentionNote.isEmpty()) {
+                    status += " - " + retentionNote;
+                }
+                statusText.setText(status);
             } else if (!completed) {
                 statusText.setText("Capture cancelled");
             }
@@ -612,6 +699,11 @@ public final class MainActivity extends Activity {
             trendText.setText("Trend   collecting");
         } else {
             trendText.setText(formatMetric("Trend", "%.1f", features.trendScore));
+        }
+        if (!baseline.hasPrevious()) {
+            previousText.setText("Previous   none");
+        } else {
+            previousText.setText(formatMetric("Previous", "%.1f", baseline.previousScore(features)));
         }
 
         if (frameQuality.severity >= 3) {
@@ -730,6 +822,38 @@ public final class MainActivity extends Activity {
             rpmInputs.put(phase, input);
         }
 
+        TextView cloudflareLabel = text("Cloudflare sync", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        cloudflareLabel.setPadding(0, dp(16), 0, 0);
+        form.addView(cloudflareLabel, matchWrap());
+
+        CheckBox cloudflareEnabledInput = new CheckBox(this);
+        cloudflareEnabledInput.setText("Auto upload accepted captures");
+        cloudflareEnabledInput.setTextSize(14);
+        cloudflareEnabledInput.setTextColor(Color.rgb(15, 23, 42));
+        cloudflareEnabledInput.setChecked(uploadEnabled());
+        form.addView(cloudflareEnabledInput, matchWrap());
+
+        TextView deviceLabel = text("Device label", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        deviceLabel.setPadding(0, dp(10), 0, 0);
+        form.addView(deviceLabel, matchWrap());
+
+        EditText deviceLabelInput = textInput(currentDeviceLabel());
+        form.addView(deviceLabelInput, matchWrap());
+
+        TextView cloudflareUrlLabel = text("Worker API URL", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        cloudflareUrlLabel.setPadding(0, dp(10), 0, 0);
+        form.addView(cloudflareUrlLabel, matchWrap());
+
+        EditText cloudflareUrlInput = urlInput(currentCloudflareUrl());
+        form.addView(cloudflareUrlInput, matchWrap());
+
+        TextView cloudflareTokenLabel = text("Upload token", 14, Color.rgb(51, 65, 85), Typeface.BOLD);
+        cloudflareTokenLabel.setPadding(0, dp(10), 0, 0);
+        form.addView(cloudflareTokenLabel, matchWrap());
+
+        EditText cloudflareTokenInput = passwordInput(currentCloudflareToken());
+        form.addView(cloudflareTokenInput, matchWrap());
+
         ScrollView scrollView = new ScrollView(this);
         scrollView.addView(form);
 
@@ -738,9 +862,22 @@ public final class MainActivity extends Activity {
                 .setView(scrollView)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> {
-                    saveSettings(durationInput, rpmInputs, engineSpinner, customEngineInput, tmohInput, issueInputs, issueNotesInput);
+                    saveSettings(
+                            durationInput,
+                            rpmInputs,
+                            engineSpinner,
+                            customEngineInput,
+                            tmohInput,
+                            issueInputs,
+                            issueNotesInput,
+                            cloudflareEnabledInput,
+                            cloudflareUrlInput,
+                            cloudflareTokenInput,
+                            deviceLabelInput
+                    );
                     refreshPhaseButtons();
                     refreshMetadataLabels();
+                    refreshSyncLabel();
                     activeEngineTag = currentEngineTag();
                     activeTmohHours = currentTmohHours();
                     activeKnownIssueTags = currentKnownIssueTags();
@@ -748,6 +885,9 @@ public final class MainActivity extends Activity {
                     baseline = SessionLogger.loadBaseline(this, activePhase, activeEngineTag);
                     refreshBaselineLabel();
                     statusText.setText("Settings saved");
+                    if (uploadEnabled()) {
+                        startCloudflareSync();
+                    }
                 })
                 .show();
     }
@@ -759,7 +899,11 @@ public final class MainActivity extends Activity {
             EditText customEngineInput,
             EditText tmohInput,
             Map<String, CheckBox> issueInputs,
-            EditText issueNotesInput
+            EditText issueNotesInput,
+            CheckBox cloudflareEnabledInput,
+            EditText cloudflareUrlInput,
+            EditText cloudflareTokenInput,
+            EditText deviceLabelInput
     ) {
         SharedPreferences.Editor editor = prefs().edit();
         int seconds = clamp(parseInt(durationInput.getText().toString(), DEFAULT_CAPTURE_SECONDS), MIN_CAPTURE_SECONDS, MAX_CAPTURE_SECONDS);
@@ -776,6 +920,10 @@ public final class MainActivity extends Activity {
         editor.putFloat(KEY_TMOH_HOURS, (float) Math.max(0.0, Math.min(100000.0, tmohHours)));
         editor.putString(KEY_KNOWN_ISSUE_TAGS, knownIssueTagsForSave(issueInputs));
         editor.putString(KEY_KNOWN_ISSUE_NOTES, cleanOptionalText(issueNotesInput.getText().toString()));
+        editor.putBoolean(KEY_CLOUDFLARE_ENABLED, cloudflareEnabledInput.isChecked());
+        editor.putString(KEY_CLOUDFLARE_URL, cleanUrl(cloudflareUrlInput.getText().toString()));
+        editor.putString(KEY_CLOUDFLARE_TOKEN, cloudflareTokenInput.getText().toString().trim());
+        editor.putString(KEY_DEVICE_LABEL, cleanOptionalText(deviceLabelInput.getText().toString()));
 
         for (String phase : PHASES) {
             EditText input = rpmInputs.get(phase);
@@ -832,6 +980,60 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void refreshSyncLabel() {
+        if (syncText == null) {
+            return;
+        }
+
+        int pending = new UploadQueueDatabase(this).pendingCount();
+        if (!uploadEnabled()) {
+            syncText.setText(String.format(Locale.US, "Sync   off, %d queued", pending));
+        } else if (!cloudflareConfig().isReady()) {
+            syncText.setText(String.format(Locale.US, "Sync   needs URL/token, %d queued", pending));
+        } else {
+            syncText.setText(String.format(Locale.US, "Sync   ready, %d queued", pending));
+        }
+    }
+
+    private boolean queueCaptureForUpload(CaptureSummary summary) {
+        if (!uploadEnabled() || !cloudflareConfig().isReady()) {
+            refreshSyncLabel();
+            return false;
+        }
+
+        new UploadQueueDatabase(this).enqueue(summary, currentDeviceLabel(), BuildConfig.VERSION_NAME);
+        refreshSyncLabel();
+        startCloudflareSync();
+        return true;
+    }
+
+    private void startCloudflareSync() {
+        refreshSyncLabel();
+        if (!uploadEnabled()) {
+            statusText.setText("Cloudflare sync off");
+            return;
+        }
+
+        CloudflareUploader.Config config = cloudflareConfig();
+        if (!config.isReady()) {
+            statusText.setText("Cloudflare needs URL/token");
+            return;
+        }
+
+        CloudflareUploader.uploadPending(this, config, status -> {
+            if (syncText != null) {
+                syncText.setText("Sync   " + status);
+            }
+            if (statusText != null) {
+                statusText.setText(status);
+            }
+        });
+    }
+
+    private CloudflareUploader.Config cloudflareConfig() {
+        return new CloudflareUploader.Config(currentCloudflareUrl(), currentCloudflareToken());
+    }
+
     private int getCaptureSeconds() {
         return prefs().getInt(KEY_CAPTURE_SECONDS, DEFAULT_CAPTURE_SECONDS);
     }
@@ -876,6 +1078,27 @@ public final class MainActivity extends Activity {
 
     private double currentTmohHours() {
         return prefs().getFloat(KEY_TMOH_HOURS, 0.0f);
+    }
+
+    private boolean uploadEnabled() {
+        return prefs().getBoolean(KEY_CLOUDFLARE_ENABLED, true);
+    }
+
+    private String currentCloudflareUrl() {
+        return cleanUrl(prefs().getString(KEY_CLOUDFLARE_URL, DEFAULT_CLOUDFLARE_URL));
+    }
+
+    private String currentCloudflareToken() {
+        String token = prefs().getString(KEY_CLOUDFLARE_TOKEN, "");
+        return token == null ? "" : token.trim();
+    }
+
+    private String currentDeviceLabel() {
+        String label = cleanOptionalText(prefs().getString(KEY_DEVICE_LABEL, ""));
+        if (!label.isEmpty()) {
+            return label;
+        }
+        return cleanOptionalText(Build.MANUFACTURER + " " + Build.MODEL);
     }
 
     private String tmohLabel(double hours) {
@@ -975,11 +1198,38 @@ public final class MainActivity extends Activity {
         return SpectrumFeatures.sanitizeOptionalCsv(value);
     }
 
+    private String cleanUrl(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return "";
+        }
+        String clean = value.trim();
+        while (clean.endsWith("/")) {
+            clean = clean.substring(0, clean.length() - 1);
+        }
+        return clean;
+    }
+
     private EditText numberInput(String value) {
         EditText editText = new EditText(this);
         editText.setSingleLine(true);
         editText.setText(value);
         editText.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        return editText;
+    }
+
+    private EditText urlInput(String value) {
+        EditText editText = new EditText(this);
+        editText.setSingleLine(true);
+        editText.setText(value);
+        editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        return editText;
+    }
+
+    private EditText passwordInput(String value) {
+        EditText editText = new EditText(this);
+        editText.setSingleLine(true);
+        editText.setText(value);
+        editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         return editText;
     }
 

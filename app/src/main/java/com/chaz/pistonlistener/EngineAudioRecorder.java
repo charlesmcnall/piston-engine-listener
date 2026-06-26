@@ -9,6 +9,8 @@ import android.os.Looper;
 
 public final class EngineAudioRecorder {
     public interface Listener {
+        void onPcm(short[] samples, int sampleCount);
+
         void onFeatures(SpectrumFeatures features);
 
         void onStatus(String status);
@@ -97,6 +99,10 @@ public final class EngineAudioRecorder {
                 if (read <= 0) {
                     continue;
                 }
+
+                short[] pcmSnapshot = new short[read];
+                System.arraycopy(readBuffer, 0, pcmSnapshot, 0, read);
+                listener.onPcm(pcmSnapshot, read);
 
                 for (int i = 0; i < read; i++) {
                     frame[frameIndex++] = readBuffer[i];
