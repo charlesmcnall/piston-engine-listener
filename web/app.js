@@ -46,10 +46,7 @@ const els = {
 loadConnection();
 bindEvents();
 renderEmptyState();
-
-if (state.token) {
-  refreshDashboard();
-}
+refreshDashboard();
 
 function bindEvents() {
   els.saveConnection.addEventListener("click", () => {
@@ -103,18 +100,12 @@ async function refreshDashboard() {
   state.token = els.apiToken.value.trim();
   saveConnection();
 
-  if (!state.token) {
-    setStatus("Enter token", "warn");
-    renderEmptyState();
-    return;
-  }
-
   setStatus("Loading", "warn");
   try {
     const query = filterQuery();
     const [stats, captures] = await Promise.all([
-      apiGet(`/v1/stats${query}`),
-      apiGet(`/v1/captures${query}${query ? "&" : "?"}limit=250`),
+      apiGet(`/v1/public/stats${query}`),
+      apiGet(`/v1/public/captures${query}${query ? "&" : "?"}limit=250`),
     ]);
     state.stats = stats;
     state.captures = captures.captures || [];
@@ -123,7 +114,7 @@ async function refreshDashboard() {
     renderBreakdown();
     renderTrendChart();
     renderTable();
-    setStatus("Connected", "good");
+    setStatus(state.token ? "Public + admin" : "Public dataset", "good");
   } catch (error) {
     setStatus(shortError(error), "bad");
   }
@@ -141,9 +132,7 @@ function filterQuery() {
 }
 
 async function apiGet(path) {
-  const response = await fetch(`${state.apiUrl}${path}`, {
-    headers: authHeaders(),
-  });
+  const response = await fetch(`${state.apiUrl}${path}`);
   return parseResponse(response);
 }
 
@@ -169,9 +158,7 @@ async function parseResponse(response) {
 }
 
 function authHeaders() {
-  return {
-    authorization: `Bearer ${state.token}`,
-  };
+  return state.token ? { authorization: `Bearer ${state.token}` } : {};
 }
 
 function populateFilterOptions() {
@@ -342,7 +329,7 @@ function renderTable() {
 
 async function openDetail(captureId) {
   try {
-    const body = await apiGet(`/v1/captures/${encodeURIComponent(captureId)}`);
+    const body = await apiGet(`/v1/public/captures/${encodeURIComponent(captureId)}`);
     state.selectedCapture = body.capture;
     renderDetail();
   } catch (error) {
@@ -385,6 +372,10 @@ function closeDetail() {
 async function saveReview() {
   const capture = state.selectedCapture;
   if (!capture) return;
+  if (!state.token) {
+    setStatus("Admin token needed", "warn");
+    return;
+  }
   try {
     await apiPatch(`/v1/captures/${encodeURIComponent(capture.capture_id)}`, {
       flagged: els.flaggedInput.checked,
@@ -403,9 +394,7 @@ async function downloadFile(kind) {
   const capture = state.selectedCapture;
   if (!capture) return;
   try {
-    const response = await fetch(`${state.apiUrl}/v1/captures/${encodeURIComponent(capture.capture_id)}/${kind}`, {
-      headers: authHeaders(),
-    });
+    const response = await fetch(`${state.apiUrl}/v1/public/captures/${encodeURIComponent(capture.capture_id)}/${kind}`);
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       throw new Error(body.error || `${response.status} ${response.statusText}`);

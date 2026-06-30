@@ -84,13 +84,15 @@ public final class CaptureSummary {
         this.audioFile = audioFile;
     }
 
-    public String toMetadataJson(String deviceLabel, String appVersion) {
+    public String toMetadataJson(String deviceLabel, String appVersion, String deviceId) {
         StringBuilder json = new StringBuilder(768);
         json.append('{');
         appendString(json, "captureId", captureId).append(',');
         appendString(json, "startedAt", startedAt).append(',');
         appendString(json, "deviceLabel", deviceLabel).append(',');
         appendString(json, "appVersion", appVersion).append(',');
+        appendString(json, "deviceId", deviceId).append(',');
+        appendString(json, "visibility", "public").append(',');
         appendString(json, "phase", phase).append(',');
         appendString(json, "engine", engine).append(',');
         appendNumber(json, "tmohHours", tmohHours).append(',');

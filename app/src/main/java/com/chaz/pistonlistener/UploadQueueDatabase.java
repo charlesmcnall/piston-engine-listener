@@ -40,7 +40,7 @@ public final class UploadQueueDatabase extends SQLiteOpenHelper {
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
     }
 
-    public void enqueue(CaptureSummary summary, String deviceLabel, String appVersion) {
+    public void enqueue(CaptureSummary summary, String deviceLabel, String appVersion, String deviceId) {
         if (summary == null || summary.audioFile == null || summary.featuresFile == null) {
             return;
         }
@@ -48,7 +48,7 @@ public final class UploadQueueDatabase extends SQLiteOpenHelper {
         long now = System.currentTimeMillis();
         ContentValues values = new ContentValues();
         values.put("capture_id", summary.captureId);
-        values.put("metadata_json", summary.toMetadataJson(deviceLabel, appVersion));
+        values.put("metadata_json", summary.toMetadataJson(deviceLabel, appVersion, deviceId));
         values.put("audio_path", summary.audioFile.getAbsolutePath());
         values.put("features_path", summary.featuresFile.getAbsolutePath());
         values.put("status", "pending");

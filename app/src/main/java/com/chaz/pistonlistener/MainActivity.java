@@ -30,6 +30,7 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_RECORD_AUDIO = 7001;
@@ -43,6 +44,7 @@ public final class MainActivity extends Activity {
     private static final String KEY_CLOUDFLARE_ENABLED = "cloudflare_enabled";
     private static final String KEY_CLOUDFLARE_URL = "cloudflare_url";
     private static final String KEY_DEVICE_LABEL = "device_label";
+    private static final String KEY_DEVICE_ID = "device_id";
     private static final int DEFAULT_CAPTURE_SECONDS = 30;
     private static final String DEFAULT_CLOUDFLARE_URL = "https://piston-listener-api.piston-listener.workers.dev";
     private static final int MIN_CAPTURE_SECONDS = 5;
@@ -990,7 +992,7 @@ public final class MainActivity extends Activity {
             return false;
         }
 
-        new UploadQueueDatabase(this).enqueue(summary, currentDeviceLabel(), BuildConfig.VERSION_NAME);
+        new UploadQueueDatabase(this).enqueue(summary, currentDeviceLabel(), BuildConfig.VERSION_NAME, currentDeviceId());
         refreshSyncLabel();
         startCloudflareSync();
         return true;
@@ -1083,6 +1085,16 @@ public final class MainActivity extends Activity {
             return label;
         }
         return cleanOptionalText(Build.MANUFACTURER + " " + Build.MODEL);
+    }
+
+    private String currentDeviceId() {
+        String deviceId = cleanOptionalText(prefs().getString(KEY_DEVICE_ID, ""));
+        if (!deviceId.isEmpty()) {
+            return deviceId;
+        }
+        String generated = UUID.randomUUID().toString();
+        prefs().edit().putString(KEY_DEVICE_ID, generated).apply();
+        return generated;
     }
 
     private String tmohLabel(double hours) {

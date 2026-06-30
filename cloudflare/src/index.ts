@@ -30,6 +30,24 @@ export default {
       return json({ ok: true, service: "piston-listener-api" }, env);
     }
 
+    if (url.pathname === "/v1/public/captures" && request.method === "GET") {
+      return listCaptures(url, env, true);
+    }
+
+    if (url.pathname === "/v1/public/stats" && request.method === "GET") {
+      return getStats(url, env, true);
+    }
+
+    const publicFileMatch = url.pathname.match(/^\/v1\/public\/captures\/([^/]+)\/(audio|features)$/);
+    if (publicFileMatch && request.method === "GET") {
+      return downloadCaptureFile(env, decodeURIComponent(publicFileMatch[1]), publicFileMatch[2] as "audio" | "features", true);
+    }
+
+    const publicCaptureMatch = url.pathname.match(/^\/v1\/public\/captures\/([^/]+)$/);
+    if (publicCaptureMatch && request.method === "GET") {
+      return getCapture(env, decodeURIComponent(publicCaptureMatch[1]), true);
+    }
+
     if (url.pathname === "/v1/captures" && request.method === "POST") {
       const guard = await publicUploadGuard(request, env, "metadata");
       if (guard) {
@@ -101,18 +119,24 @@ async function createCapture(request: Request, env: Env, publicUpload = false): 
   await env.DB.prepare(
     `INSERT INTO captures (
       capture_id, started_at, received_at, updated_at, device_label, app_version,
-      engine, phase, tmoh_hours, known_issue_tags, known_issue_notes,
+      owner_id, device_id, visibility, uploaded_by_anonymous, moderation_status, engine, phase,
+      tmoh_hours, known_issue_tags, known_issue_notes,
       duration_millis, frame_count, avg_rpm, avg_rms_dbfs, max_clip_percent,
       avg_dominant_hz, avg_centroid_hz, avg_band20_120, avg_band120_600,
       avg_band600_2500, avg_band2500_6000, avg_peak_dbfs, avg_crest_factor_db,
       max_flat_top_percent, signal_quality, accepted_for_trend, sample_rate,
       audio_file_name, features_file_name
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(capture_id) DO UPDATE SET
       started_at = excluded.started_at,
       updated_at = excluded.updated_at,
       device_label = excluded.device_label,
       app_version = excluded.app_version,
+      owner_id = excluded.owner_id,
+      device_id = excluded.device_id,
+      visibility = excluded.visibility,
+      uploaded_by_anonymous = excluded.uploaded_by_anonymous,
+      moderation_status = excluded.moderation_status,
       engine = excluded.engine,
       phase = excluded.phase,
       tmoh_hours = excluded.tmoh_hours,
@@ -145,6 +169,11 @@ async function createCapture(request: Request, env: Env, publicUpload = false): 
       now,
       stringField(payload, "deviceLabel"),
       stringField(payload, "appVersion"),
+      stringField(payload, "ownerId"),
+      stringField(payload, "deviceId"),
+      visibilityField(payload),
+      publicUpload ? 1 : booleanField(payload, "uploadedByAnonymous") ? 1 : 0,
+      moderationStatusField(payload, publicUpload),
       stringField(payload, "engine"),
       stringField(payload, "phase"),
       numberField(payload, "tmohHours"),
@@ -315,12 +344,13 @@ function validatePublicCapturePayload(payload: CapturePayload): string {
   return "";
 }
 
-async function listCaptures(url: URL, env: Env): Promise<Response> {
+async function listCaptures(url: URL, env: Env, publicRead = false): Promise<Response> {
   const rawLimit = Number(url.searchParams.get("limit") || "25");
   const limit = Math.max(1, Math.min(250, Number.isFinite(rawLimit) ? rawLimit : 25));
-  const filters = captureFilters(url);
+  const filters = captureFilters(url, publicRead);
   const result = await env.DB.prepare(
     `SELECT capture_id, started_at, received_at, updated_at, device_label, app_version,
+       owner_id, device_id, visibility, uploaded_by_anonymous, moderation_status,
        engine, phase, tmoh_hours, known_issue_tags, duration_millis, frame_count,
        avg_rpm, avg_rms_dbfs, max_clip_percent, avg_dominant_hz, avg_centroid_hz,
        avg_band20_120, avg_band120_600, avg_band600_2500, avg_band2500_6000,
@@ -335,8 +365,8 @@ async function listCaptures(url: URL, env: Env): Promise<Response> {
   return json({ ok: true, captures: result.results || [] }, env);
 }
 
-async function getStats(url: URL, env: Env): Promise<Response> {
-  const filters = captureFilters(url);
+async function getStats(url: URL, env: Env, publicRead = false): Promise<Response> {
+  const filters = captureFilters(url, publicRead);
   const totals = await env.DB.prepare(
     `SELECT
        COUNT(*) AS total_captures,
@@ -378,11 +408,15 @@ async function getStats(url: URL, env: Env): Promise<Response> {
   }, env);
 }
 
-async function getCapture(env: Env, captureId: string): Promise<Response> {
+async function getCapture(env: Env, captureId: string, publicRead = false): Promise<Response> {
   if (!validCaptureId(captureId)) {
     return json({ error: "invalid captureId" }, env, 400);
   }
-  const row = await env.DB.prepare("SELECT * FROM captures WHERE capture_id = ?").bind(captureId).first();
+  const row = await env.DB.prepare(
+    `SELECT * FROM captures
+     WHERE capture_id = ?
+     ${publicRead ? "AND visibility = 'public' AND moderation_status = 'approved'" : ""}`
+  ).bind(captureId).first();
   if (!row) {
     return json({ error: "not found" }, env, 404);
   }
@@ -419,7 +453,7 @@ async function updateCaptureReview(request: Request, env: Env, captureId: string
   return json({ ok: true, captureId, reviewStatus, flagged: flagged === 1 }, env);
 }
 
-async function downloadCaptureFile(env: Env, captureId: string, kind: "audio" | "features"): Promise<Response> {
+async function downloadCaptureFile(env: Env, captureId: string, kind: "audio" | "features", publicRead = false): Promise<Response> {
   if (!validCaptureId(captureId)) {
     return json({ error: "invalid captureId" }, env, 400);
   }
@@ -429,7 +463,8 @@ async function downloadCaptureFile(env: Env, captureId: string, kind: "audio" | 
   const row = await env.DB.prepare(
     `SELECT ${column} AS r2_key, ${contentColumn} AS content_type
      FROM captures
-     WHERE capture_id = ?`
+     WHERE capture_id = ?
+     ${publicRead ? "AND visibility = 'public' AND moderation_status = 'approved'" : ""}`
   ).bind(captureId).first<{ r2_key?: string; content_type?: string }>();
 
   if (!row?.r2_key) {
@@ -449,9 +484,13 @@ async function downloadCaptureFile(env: Env, captureId: string, kind: "audio" | 
   return withCors(new Response(object.body, { headers }), env);
 }
 
-function captureFilters(url: URL): { where: string; values: QueryValue[] } {
+function captureFilters(url: URL, publicRead = false): { where: string; values: QueryValue[] } {
   const clauses: string[] = [];
   const values: QueryValue[] = [];
+  if (publicRead) {
+    clauses.push("visibility = 'public'");
+    clauses.push("moderation_status = 'approved'");
+  }
   addTextFilter(url, clauses, values, "engine", "engine");
   addTextFilter(url, clauses, values, "phase", "phase");
   addTextFilter(url, clauses, values, "quality", "signal_quality");
@@ -536,6 +575,18 @@ function integerField(payload: CapturePayload, key: string): number {
 
 function booleanField(payload: CapturePayload, key: string): boolean {
   return payload[key] === true || payload[key] === 1 || payload[key] === "true";
+}
+
+function visibilityField(payload: CapturePayload): string {
+  return stringField(payload, "visibility") === "private" ? "private" : "public";
+}
+
+function moderationStatusField(payload: CapturePayload, publicUpload: boolean): string {
+  if (publicUpload) {
+    return "approved";
+  }
+  const value = stringField(payload, "moderationStatus");
+  return value || "approved";
 }
 
 function validCaptureId(value: string): boolean {

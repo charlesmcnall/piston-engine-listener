@@ -98,11 +98,11 @@ https://piston-listener-api.piston-listener.workers.dev
 
 Accepted captures are saved locally first. If the phone is offline or upload fails, the pending upload files stay on the phone and can be retried with **Sync**.
 
-Phone upload does not require a token. Keep the private `UPLOAD_TOKEN` for the dashboard and admin API calls.
+Phone upload does not require a token. Public dashboard browsing and public WAV/CSV downloads also do not require a token. Keep the private `UPLOAD_TOKEN` for admin review edits and private API calls.
 
 ## API shape
 
-The app uploads each capture in three calls:
+The app uploads each capture in three public write calls:
 
 ```text
 POST /v1/captures
@@ -110,7 +110,17 @@ PUT  /v1/captures/{captureId}/audio
 PUT  /v1/captures/{captureId}/features
 ```
 
-All `/v1/*` calls require:
+Public read-only comparison endpoints:
+
+```text
+GET /v1/public/stats
+GET /v1/public/captures
+GET /v1/public/captures/{captureId}
+GET /v1/public/captures/{captureId}/audio
+GET /v1/public/captures/{captureId}/features
+```
+
+Private/admin read and review endpoints still require:
 
 ```text
 Authorization: Bearer <upload-token>
@@ -132,11 +142,19 @@ Get one capture through the Worker:
 curl -H "Authorization: Bearer <upload-token>" https://piston-listener-api.<your-account>.workers.dev/v1/captures/<capture-id>
 ```
 
+Get one public capture without a token:
+
+```powershell
+curl https://piston-listener-api.<your-account>.workers.dev/v1/public/captures/<capture-id>
+```
+
 ## Notes
 
 - A 30 second 48 kHz mono 16-bit WAV is about 2.9 MB.
 - The app uploads only captures that pass the signal-quality gate.
 - Public phone uploads are limited by request size, metadata validation, and per-IP rate limiting.
+- Public reads only return captures with `visibility = public` and `moderation_status = approved`.
+- The schema already includes nullable ownership fields for future user login, claiming, and owner-editable metadata workflows.
 - The app keeps compact baseline summary rows locally, but prunes older detailed WAV/CSV files after they are uploaded or superseded by a newer local capture for the same engine and phase.
 - Rejected captures are not queued for Cloudflare upload and may be removed by local retention. Cancelled captures delete the partial WAV.
 - Keep the dashboard/admin upload token private. Rotate it with `npm run secret:upload-token` if it leaks.

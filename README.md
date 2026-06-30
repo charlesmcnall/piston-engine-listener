@@ -97,14 +97,14 @@ Cloudflare setup files live in `cloudflare/`, with setup notes in `docs/cloudfla
 
 The dashboard lives in `web/` and can be opened directly from `web\index.html` or deployed to Cloudflare Pages. Setup notes are in `docs/cloudflare-dashboard-setup.md`.
 
-The Android app uploads accepted captures anonymously through a size-limited and rate-limited public Worker path. The dashboard still requires the private Worker token for browsing, review, and downloads. It does not store secrets in git.
+The Android app uploads accepted captures anonymously through a size-limited and rate-limited public Worker path. The dashboard is public read-only for browsing, comparison, capture details, and WAV/CSV downloads. The private Worker token is only needed for admin review edits.
 
 The live dashboard includes a **Latest APK** link that points to the newest GitHub Release asset.
 
 ## Next build slice
 
 - Export/share CSV files from the phone.
-- Add account/user separation for shared Cloudflare datasets.
+- Add account login so users can claim uploads and edit their own metadata.
 - Add automatic Supabase upload for accepted captures, if Supabase remains a target.
 - Add phase-specific RPM normalization.
 - Add a foreground recording service.

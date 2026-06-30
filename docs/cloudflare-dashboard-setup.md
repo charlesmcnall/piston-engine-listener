@@ -1,6 +1,6 @@
 # Cloudflare dashboard setup
 
-The dashboard is a static website in `web/`. It talks to the existing Piston Listener Worker API and uses the same private bearer token as the Android app.
+The dashboard is a static website in `web/`. It talks to the existing Piston Listener Worker API. Normal browsing uses public read-only endpoints; the private bearer token is only needed for admin review edits.
 
 ## What it provides
 
@@ -10,13 +10,13 @@ The dashboard is a static website in `web/`. It talks to the existing Piston Lis
 - Trend chart for RMS, centroid, dominant frequency, clipping, and band energy.
 - Engine/phase group breakdown.
 - Detail panel for each capture.
-- Review status, flagged state, and analyst notes.
-- Authenticated WAV and CSV downloads from R2.
+- Public WAV and CSV downloads from R2.
+- Optional admin review status, flagged state, and analyst notes.
 - A **Latest APK** link to `https://github.com/charlesmcnall/piston-engine-listener/releases/latest/download/app-debug.apk`.
 
 ## Backend migration
 
-Apply the review-field migration before deploying the updated Worker:
+Apply D1 migrations before deploying the updated Worker:
 
 ```powershell
 cd cloudflare
@@ -24,11 +24,17 @@ npm run d1:migrate
 npm run deploy
 ```
 
-The migration adds:
+Recent migrations add:
 
 - `review_status`
 - `analyst_notes`
 - `flagged`
+- `owner_id`
+- `device_id`
+- `visibility`
+- `uploaded_by_anonymous`
+- `moderation_status`
+- `claimed_at`
 
 ## Local use
 
@@ -41,9 +47,9 @@ web\index.html
 Enter:
 
 - Worker API: `https://piston-listener-api.piston-listener.workers.dev`
-- Dashboard token: the private `UPLOAD_TOKEN` value from `cloudflare\.dev.vars`
+- Admin token: optional private `UPLOAD_TOKEN` value from `cloudflare\.dev.vars`, only needed to save review edits
 
-The token is stored in browser local storage on that computer only. Do not commit it to git or paste it into public screenshots.
+If entered, the admin token is stored in browser local storage on that computer only. Do not commit it to git or paste it into public screenshots.
 
 ## Cloudflare Pages deploy
 
